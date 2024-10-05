@@ -102,3 +102,63 @@ E_x_wrt_y = p_x_given_y.dot(p_y)
 
 print(E_x_wrt_y)
 print(f'Integral: {E_x_wrt_y.sum().round(3)}')
+
+import itertools
+
+""" Create  the grid locations in the form of a list of (Y, X) tuples -- HINT: use itertools """
+grid_locations = list(itertools.product(range(3), repeat = 2))
+print(grid_locations)
+
+""" Create variables for the storing the dimensionalities of the hidden states and the observations """
+
+n_states = len(grid_locations)
+n_observations = len(grid_locations)
+
+print(f'Dimensionality of hidden states: {n_states}')
+print(f'Dimensionality of observations: {n_observations}')
+
+""" Create the A matrix  """
+
+A = np.zeros( (n_states, n_observations) )
+
+""" Create an umambiguous or 'noise-less' mapping between hidden states and observations """
+
+np.fill_diagonal(A, 1.0)
+
+# alternative:
+# A = np.eye(n_observations, n_states)
+
+plot_likelihood(A, title_str = "A matrix or $P(o|s)$")
+
+""" Remind yourself of the mapping between linear indices (0 through 8) and grid locations (Y, X) """
+plot_grid(grid_locations)
+
+A_noisy = A.copy()
+
+# this line says: the probability of seeing yourself in location 0, given you're in location 0, is 1/3, AKA P(o == 0 | s == 0) = 0.3333....
+A_noisy[0,0] = 1 / 3.0 # corresponds to location (0,0)
+
+# this line says: the probability of seeing yourself in location 1, given you're in location 0, is 1/3, AKA P(o == 1 | s == 0) = 0.3333....
+A_noisy[1,0] = 1 / 3.0 # corresponds to one step to the right from (0, 1)
+
+# this line says: the probability of seeing yourself in location 3, given you're in location 0, is 1/3, AKA P(o == 3 | s == 0) = 0.3333....
+A_noisy[3,0] = 1 / 3.0 # corresponds to one step down from (1, 0)
+plot_likelihood(A_noisy, title_str = 'modified A matrix where location (0,0) is "blurry"')
+
+""" Let's make ake one grid location "ambiguous" in the sense that it could be easily confused with neighbouring locations """
+my_A_noisy = A_noisy.copy()
+
+# locations 3 and 7 are the nearest neighbours to location 6
+my_A_noisy[3,6] = 1.0 / 3.0
+my_A_noisy[6,6] = 1.0 / 3.0
+my_A_noisy[7,6] = 1.0 / 3.0
+
+# Alternatively: you could have the probability spread among locations 3, 4, 6, and 7. This is basically saying, that whole lower-left corner of grid-world is blurry, if you're in location 6
+# Remember to make sure the A matrix is column normalized. So if you do it this way, with the probabilities spread among 4 perceived locations, then you'll have to make sure the probabilities sum to 1.0
+# my_A_noisy[3,6] = 1.0 / 4.0
+# my_A_noisy[4,6] = 1.0 / 4.0
+# my_A_noisy[6,6] = 1.0 / 4.0
+# my_A_noisy[7,6] = 1.0 / 4.0
+
+plot_likelihood(my_A_noisy, title_str = "Noisy A matrix now with TWO ambiguous locations")
+
