@@ -336,7 +336,14 @@ for t in range(T):
         else:
             obs.append(0)
 
-        qs = my_agent.infer_states(obs)
+        obs = np.array(obs)
+
+        noise = np.random.normal(loc=0, scale=0.1, size=obs.shape)
+        noisy_obs = obs + noise
+
+        noisy_obs = np.round(noisy_obs).astype(int)
+        
+        qs = my_agent.infer_states(noisy_obs)
     
     my_agent.infer_policies()
     chosen_action_id = my_agent.sample_action()
