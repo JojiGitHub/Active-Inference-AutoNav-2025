@@ -53,6 +53,32 @@ def plot_beliefs(belief_dist, title_str=""):
     plt.title(title_str)
     plt.show()
 
+def add_noise_to_transition(A, noise_level=0.1):
+    """
+    Add noise to transition matrix while preserving normalization
+    
+    Args:
+        A: Original transition matrix
+        noise_level: Amount of noise to add (0-1)
+    """
+    # Generate random noise
+    noise = np.random.uniform(-noise_level, noise_level, size=A.shape)
+
+    print(noise) 
+    
+    # Add noise to matrix
+    noisy_A = A + noise
+    
+    # Ensure non-negative
+    noisy_A = np.maximum(noisy_A, 0.0)
+    
+    # Normalize columns to sum to 1
+    noisy_A = noisy_A / noisy_A.sum(axis=0, keepdims=True)
+    
+    return noisy_A
+
+# Usage:
+# A = add_noise_to_transition(A, noise_level=0.1)
 
 # parameters
 # grid_dimensions
@@ -90,8 +116,6 @@ num_obs = [len(grid_locations), len(safety), len(goal)]
 
 # A matrix
 A_m_shapes = [ [o_dim] + num_states for o_dim in num_obs] # list of shapes of modality-specific A[m] arrays
-A = utils.obj_array_zeros(A_m_shapes) # initialize A array to an object array of all-zero subarrays
-A_m_shapes # 2 types of observations, one type of state
 A = utils.obj_array_zeros(A_m_shapes)
 A[0] = np.eye(num_grid_points)  # Location observations (one-hot encoded)
 
@@ -112,6 +136,10 @@ A[2][1, 0] = 0
 A[2][0, 1:] = 1
 A[2][1, 1:] = 0
 
+# # Add noise to each modality separately
+for modality in range(len(A)):
+    A[modality] = add_noise_to_transition(A[modality], noise_level=0.1) # CHANGE NOISE_LEVEL THIS TO MODIFY AGENT BEHAVIOR
+
 # Verify normalization
 for modality in range(len(A)):
     column_sums = np.sum(A[modality], axis=0)
@@ -119,6 +147,8 @@ for modality in range(len(A)):
     
     # Each column should sum to 1
     assert np.allclose(column_sums, 1.0), f"Modality {modality} is not normalized"
+
+print(A)
 
 # B matrix
 num_controls = [5]
@@ -154,7 +184,11 @@ for action_id, action_label in enumerate(actions):
     next_state = grid_locations.index(new_location)
     B[0][next_state, curr_state, action_id] = 1.0
 
-# C Matrix
+plot_likelihood((A[0]))
+plot_likelihood((A[1]))
+plot_likelihood((A[2]))
+
+# C Matrix (PROBLEM #2)
 C = utils.obj_array_zeros(num_obs)  # Initialize C array with shape matching num_obs
 
 # Set preferences for state observations (location)
@@ -162,11 +196,11 @@ C[0] = np.zeros(len(grid_locations))
 
 # Set preferences for safety observations
 C[1] = np.zeros(len(safety))
-C[1][1] = -5.0  # Negative preference for red spots
+C[1][1] = -5.0  # Negative preference for red spots; CHANGE THIS TO MODIFY AGENT BEHAVIOR
 
 # Set preferences for goal observations
 C[2] = np.zeros(len(goal))
-C[2][1] = 20.0  # Positive preference for reaching the goal
+C[2][1] = 20.0  # Positive preference for reaching the goal; CHANGE THIS TO MODIFY AGENT BEHAVIOR
 
 # C = utils.obj_array_zeros(num_obs)
 # C[1][1] = -5 # negative preference for red spots (punishment)
@@ -206,6 +240,8 @@ def update_vision(current_location, grid_dims, distance):
 
 X, Y = 0, 0
 
+X, Y = 0, 0
+
 class GridWorldEnv():
 
     def __init__(self, starting_loc = (0, 0), red1_loc = (1, 2), red2_loc = (3,2), red3_loc = (4,4), red4_loc = (6, 1), goal = (6 ,4)):
@@ -233,16 +269,17 @@ class GridWorldEnv():
 
         Y, X = self.current_location
 
-        if action_label == "DOWN": 
+
+        if action_label == "UP": 
           if Y < grid_dims[0] - 1: Y_new = Y + 1
           else: Y_new = Y
           X_new = X
 
-        elif action_label == "UP": 
+        elif action_label == "DOWN": 
         
           if Y > 0: Y_new = Y - 1
           else: Y_new = Y
-          X_new = X
+          X_new = X      
 
         elif action_label == "LEFT": 
           
@@ -260,11 +297,11 @@ class GridWorldEnv():
           Y_new, X_new = Y, X
         
         X, Y = X_new, Y_new
-        current_location = (Y_new, X_new) # store the new grid location
-        self.vision = update_vision(current_location, grid_dims, 7)
+        self.current_location = (Y_new, X_new) # store the new grid location
+        print(f" self.current_location: {self.current_location}")
+        self.vision = update_vision(self.current_location, grid_dims, 7)
 
-        loc_obs = self.current_location # agent directly observes its position in grid
-
+        self.loc_obs = self.current_location # agent directly observes its position in grid
 
         for spot in self.vision:
             if spot in self.redspots:
@@ -289,7 +326,7 @@ class GridWorldEnv():
                 self.red_obs.append(self.current_location)
         elif self.current_location == self.goal:
             self.agent_reward += 20
-            self.goal_obs = current_location
+            self.goal_obs = self.current_location
         else:
             if 'Null' in self.empty_obs:
                 self.empty_obs = [self.current_location]
@@ -317,7 +354,7 @@ loc_obs, goal_obs, empty_obs, red_obs, agent_reward = my_env.reset()
 
 history_of_locs = [loc_obs]
 
-T = 10
+T = 15
 
 for t in range(T):
 
