@@ -380,7 +380,12 @@ for t in range(T):
 
         noisy_obs = np.round(noisy_obs).astype(int)
         
+        print(obs)
+        print(noisy_obs)
         qs = my_agent.infer_states(noisy_obs)
+
+        plot_beliefs(qs.all())
+
     
     my_agent.infer_policies()
     chosen_action_id = my_agent.sample_action()
@@ -389,7 +394,7 @@ for t in range(T):
 
     choice_action = actions[movement_id]
 
-    print(f'Action at time {t}: {chosen_action_id}')
+    print(f'Action at time {t}: {choice_action}')
 
     
     agent_reward, loc_obs, goal_obs, empty_obs, red_obs = my_env.step(choice_action)
