@@ -389,7 +389,7 @@ for t in range(T):
 
     choice_action = actions[movement_id]
 
-    print(f'Action at time {t}: {choice_action}')
+    print(f'Action at time {t}: {chosen_action_id}')
 
     
     agent_reward, loc_obs, goal_obs, empty_obs, red_obs = my_env.step(choice_action)
