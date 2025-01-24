@@ -1,6 +1,6 @@
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 
-client = RemoteAPIClient()
+client = RemoteAPIClient(port=23000)
 sim = client.require('sim')
 
 sim.setStepping(True)
