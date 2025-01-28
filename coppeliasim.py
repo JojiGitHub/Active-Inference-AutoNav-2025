@@ -2,14 +2,9 @@ from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 import numpy as np
 import time
 
-<<<<<<< HEAD
-client = RemoteAPIClient(port=23000)
-sim = client.require('sim')
-=======
 # Step 1: Create a client and get handles
 client = RemoteAPIClient()
 sim = client.getObject('sim')
->>>>>>> df141bc6735730474198c8ba53d7d5d524e26bd9
 
 # Step 2: Get the object handle for the Cuboid
 
@@ -84,11 +79,6 @@ def follow_path():
 
 # Step 7: Start the simulation
 sim.startSimulation()
-<<<<<<< HEAD
-while (t := sim.getSimulationTime()) < 3:
-    print(f'Simulation time: {t:.2f} [s]')
-    sim.step()
-=======
 
 # Step 8: Run the initialization and simulation
 init()  # Initialize the script
@@ -96,5 +86,4 @@ follow_path()  # Start following the path
 
 # Step 9: Stop the simulation after some time or based on a condition
 time.sleep(10)  # Run the simulation for 10 seconds (adjust as needed)
->>>>>>> df141bc6735730474198c8ba53d7d5d524e26bd9
 sim.stopSimulation()
