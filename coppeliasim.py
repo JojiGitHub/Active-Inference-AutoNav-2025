@@ -127,11 +127,11 @@ def move_to_grid(x, y, z):
         return "Invalid y grid point!"
     
     # Return the grid indices
-    return (x_grid, y_grid, z)
+    return (x_grid, y_grid)
 
     
 def grid_to_coordinates(x_grid, y_grid, z):
-    '''Converts a valid 200x200 grid point back into (x,y) coordinates in the range (0,0) to (5,5), z remains constant'''
+    '''Converts a valid 200x200 grid point back into coppelia (x,y,z) coordinates in the range (x,y) = (0,0)-(5,5), z remains constant'''
     
     # Ensure the grid points are within valid range (0 to 200)
     if x_grid > 200 or x_grid < 0:
