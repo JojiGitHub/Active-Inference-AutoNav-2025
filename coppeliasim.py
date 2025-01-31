@@ -146,4 +146,6 @@ def grid_to_coordinates(x_grid, y_grid, z):
     # Return the original (x, y, z) coordinates
     return (x, y, z)   
     
+danger_spots = [move_to_grid(1.15,-1.35,0),move_to_grid(0.85,-1.35,0),move_to_grid(1.15,-1.65,0),move_to_grid(0.85,-1.65,0),move_to_grid(1.9,0.15,0),move_to_grid(1.6,0.15,0),move_to_grid(1.6,-0.15,0),move_to_grid(1.9,-0.15,0),move_to_grid(1.15,1.4,0),move_to_grid(0.85,1.4,0),move_to_grid(1.15,1.05,0),move_to_grid(0.85,1.05,0),move_to_grid(-1.35,1.15,0),move_to_grid(-1.65,1.15,0),move_to_grid(-1.35,0.85,0),move_to_grid(-1.65,0.85,0),move_to_grid(-1.35,1.15,0),move_to_grid(-1.65,1.15,0),move_to_grid(-1.35,0.85,0),move_to_grid(-1.65,0.85,0)]
 
+print(danger_spots)
