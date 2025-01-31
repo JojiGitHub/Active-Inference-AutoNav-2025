@@ -104,7 +104,7 @@ import time
 
 
 def move_to_grid(x, y, z):
-    '''Moves coordinates coppelia coordinates (x,y,z) to a 200x200 grid, z coordinate remains constant, outputs coordinate in terms of grid'''
+    '''Moves coppelia coordinates (x,y,z) to a 200x200 grid, z coordinate remains constant, outputs coordinate in terms of grid'''
     
     # Translate x,y coordinate 2.5 up and 2.5 right
     x = x + 2.5
