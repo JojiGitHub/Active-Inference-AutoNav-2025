@@ -104,7 +104,7 @@ import time
 
 
 def move_to_grid(x, y, z):
-    '''Moves coppelia coordinates (x,y,z) to a 200x200 grid, z coordinate remains constant, outputs coordinate in terms of grid'''
+    '''Moves coppelia coordinates (x,y,z) to a 40x40 grid, z coordinate remains constant, outputs coordinate in terms of grid'''
     
     # Translate x,y coordinate 2.5 up and 2.5 right
     x = x + 2.5
@@ -117,13 +117,13 @@ def move_to_grid(x, y, z):
         return "Invalid y coordinate!"
     
     # Convert x, y to grid indices by dividing by 0.05 (since each grid cell is 0.05 wide)
-    x_grid = round(x / 0.05)
-    y_grid = round(y / 0.05)
+    x_grid = round(x / 0.2)
+    y_grid = round(y / 0.2)
     
     # Ensure that the coordinates are within valid grid range (0 to 200)
-    if x_grid > 200 or x_grid < 0:
+    if x_grid > 40 or x_grid < 0:
         return "Invalid x grid point!"
-    if y_grid > 200 or y_grid < 0:
+    if y_grid > 40 or y_grid < 0:
         return "Invalid y grid point!"
     
     # Return the grid indices
@@ -134,14 +134,14 @@ def grid_to_coordinates(x_grid, y_grid, z):
     '''Converts a valid 200x200 grid point back into coppelia (x,y,z) coordinates in the range (x,y) = (0,0)-(5,5), z remains constant'''
     
     # Ensure the grid points are within valid range (0 to 200)
-    if x_grid > 200 or x_grid < 0:
+    if x_grid > 40 or x_grid < 0:
         return "Invalid x grid point!"
-    if y_grid > 200 or y_grid < 0:
+    if y_grid > 40 or y_grid < 0:
         return "Invalid y grid point!"
     
     # Reverse the grid index conversion by multiplying by 0.05
-    x = x_grid * 0.05
-    y = y_grid * 0.05
+    x = x_grid * 0.2
+    y = y_grid * 0.2
     
     # Return the original (x, y, z) coordinates
     return (x, y, z)   
