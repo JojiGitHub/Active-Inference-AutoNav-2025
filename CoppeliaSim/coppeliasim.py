@@ -104,107 +104,107 @@
 # sim.stopSimulation()
 
 
-# def move_to_grid(x, y, z):
-#     '''Moves coppelia coordinates (x,y,z) to a 40x40 grid, z coordinate remains constant, outputs coordinate in terms of grid'''
-    
-#     # Translate x,y coordinate 2.5 up and 2.5 right
-#     x = x + 2.5
-#     y = y + 2.5
-    
-#     # Ensure coordinates (x,y) are within (0,0) and (5,5)
-#     if x > 5 or x < 0:
-#         return "Invalid x coordinate!"
-#     elif y > 5 or y < 0:
-#         return "Invalid y coordinate!"
-    
-#     # Convert x, y to grid indices by dividing by 0.05 (since each grid cell is 0.05 wide)
-#     x_grid = round(x / 0.25)
-#     y_grid = round(y / 0.25)
-    
-#     # Ensure that the coordinates are within valid grid range (0 to 200)
-#     if x_grid > 40 or x_grid < 0:
-#         return "Invalid x grid point!"
-#     if y_grid > 40 or y_grid < 0:
-#         return "Invalid y grid point!"
-    
-#     # Return the grid indices
-#     return (x_grid, y_grid)
-
-    
-# def grid_to_coordinates(x_grid, y_grid, z):
-#     '''Converts a valid 200x200 grid point back into coppelia (x,y,z) coordinates in the range (x,y) = (0,0)-(5,5), z remains constant'''
-    
-#     # Ensure the grid points are within valid range (0 to 200)
-#     if x_grid > 40 or x_grid < 0:
-#         return "Invalid x grid point!"
-#     if y_grid > 40 or y_grid < 0:
-#         return "Invalid y grid point!"
-    
-#     # Reverse the grid index conversion by multiplying by 0.05
-#     x = x_grid * 0.25
-#     y = y_grid * 0.25
-    
-#     # Return the original (x, y, z) coordinates
-#     return (x, y, z)   
 
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 import numpy as np
 import time
 
-# Step 1: Create a client and get handles
-client = RemoteAPIClient()
-sim = client.getObject('sim')
+# # Step 1: Create a client and get handles
+# client = RemoteAPIClient()
+# sim = client.getObject('sim')
 
-# Step 2: Get the object handle for the Cuboid
-floorHandle = sim.getObject('/Floor')
+# # Step 2: Get the object handle for the Cuboid
+# floorHandle = sim.getObject('/Floor')
 
-ctrlPts = [
-    0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0,
-    0.5, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0,  # Start point (position and neutral orientation)
-    1.0, 1.0, 0.05, 0.0, 0.0, 0.0, 1.0   # End point (position and neutral orientation)
-]
+# ctrlPts = [
+#     0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0,
+#     0.5, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0,  # Start point (position and neutral orientation)
+#     1.0, 1.0, 0.05, 0.0, 0.0, 0.0, 1.0   # End point (position and neutral orientation)
+# ]
 
-# Create the path
-sim.createPath(
-    ctrlPts,   # Control points defining the path
-    0,         # Options (bit0 is not set, meaning path is open)
-    100,       # Subdivision (number of points to create along the path for smoother interpolation)
-    1,       # Smoothness (Bezier interpolation is off for a linear path)
-    0,         # Orientation mode (x-axis along path, y-axis is up)
-    [0.0, 0.0, 1.0],  # Up vector for path orientation 
-)
+# # Create the path
+# sim.createPath(
+#     ctrlPts,   # Control points defining the path
+#     0,         # Options (bit0 is not set, meaning path is open)
+#     100,       # Subdivision (number of points to create along the path for smoother interpolation)
+#     1,       # Smoothness (Bezier interpolation is off for a linear path)
+#     0,         # Orientation mode (x-axis along path, y-axis is up)
+#     [0.0, 0.0, 1.0],  # Up vector for path orientation 
+# )
 
-pathHandle = sim.getObject('/Path')
+# pathHandle = sim.getObject('/Path')
 
-sim.setObjectParent(pathHandle, floorHandle, True)
+# sim.setObjectParent(pathHandle, floorHandle, True)
 
-# Get the handle of the cuboid
-cuboidHandle = sim.getObject('/Cuboid')
+# # Get the handle of the cuboid
+# cuboidHandle = sim.getObject('/Cuboid')
 
-print(f"Path Handle: {pathHandle}")
-alias = sim.getObjectAlias(pathHandle)
-print(f"Path Alias: {alias}")
+# print(f"Path Handle: {pathHandle}")
+# alias = sim.getObjectAlias(pathHandle)
+# print(f"Path Alias: {alias}")
 
-pathHandle = sim.getObject('/Path')  # Explicitly retrieve path handle
-if pathHandle == -1:
-    print("Error: Path does not exist!")
-else:
-    print(f"Path handle retrieved successfully: {pathHandle}")
+# pathHandle = sim.getObject('/Path')  # Explicitly retrieve path handle
+# if pathHandle == -1:
+#     print("Error: Path does not exist!")
+# else:
+#     print(f"Path handle retrieved successfully: {pathHandle}")
 
-allObjects = sim.getObjectsInTree(sim.handle_scene)
-print("Objects in scene:", [sim.getObjectAlias(obj) for obj in allObjects])
+# allObjects = sim.getObjectsInTree(sim.handle_scene)
+# print("Objects in scene:", [sim.getObjectAlias(obj) for obj in allObjects])
 
-objType = sim.getObjectType(pathHandle)
-print(f"Object Type: {objType}")
+# objType = sim.getObjectType(pathHandle)
+# print(f"Object Type: {objType}")
 
-# Start the simulation
-sim.startSimulation()
+# # Start the simulation
+# sim.startSimulation()
 
-# # Let the cuboid follow the Bezier curve
-sim.followPath(cuboidHandle, pathHandle, 3, 2, 0.2, 0.05)  # Object, Path, Mode, Options, Speed, Accel
+# # # Let the cuboid follow the Bezier curve
+# sim.followPath(cuboidHandle, pathHandle, 3, 2, 0.2, 0.05)  # Object, Path, Mode, Options, Speed, Accel
 
-# # Allow time for simulation
-# time.sleep(10)
+# # # Allow time for simulation
+# # time.sleep(10)
 
-# Stop simulation after time
-sim.stopSimulation()
+# # Stop simulation after time
+# sim.stopSimulation()
+
+def move_to_grid(x, y, z, width=0.25, height=0.25):
+    '''Moves Coppelia coordinates (x,y,z) to a 40x40 grid, keeping only valid points.'''
+    
+    # Translate x, y coordinate 2.5 up and 2.5 right
+    x = x + 2.5
+    y = y + 2.5
+    
+    # Convert x, y to grid indices
+    x_grid = round(x / 0.25)
+    y_grid = round(y / 0.25)
+
+    # Check if center is within valid grid bounds
+    if 0 <= x_grid <= 40 and 0 <= y_grid <= 40:
+        return [(x_grid, y_grid)]  # Return as a list (single valid center)
+
+    # Otherwise, check boundary points
+    boundary_points = [
+        (x + width / 2, y + height / 2),
+        (x + width / 2, y - height / 2),
+        (x - width / 2, y + height / 2),
+        (x - width / 2, y - height / 2)
+    ]
+
+    valid_points = []
+    for bx, by in boundary_points:
+        bx_grid = round(bx / 0.25)
+        by_grid = round(by / 0.25)
+        if 0 <= bx_grid <= 40 and 0 <= by_grid <= 40:
+            valid_points.append((bx_grid, by_grid))
+
+    return valid_points if valid_points else "Invalid object position!"
+
+def grid_to_coordinates(x_grid, y_grid, z):
+    '''Converts a valid 40x40 grid point back to Coppelia coordinates.'''
+    
+    if 0 <= x_grid <= 40 and 0 <= y_grid <= 40:
+        x = x_grid * 0.25 - 2.5
+        y = y_grid * 0.25 - 2.5
+        return (x, y, z)
+    
+    return "Invalid grid point!"
