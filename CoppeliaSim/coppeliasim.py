@@ -110,8 +110,8 @@ import numpy as np
 import time
 
 # # Step 1: Create a client and get handles
-# client = RemoteAPIClient()
-# sim = client.getObject('sim')
+client = RemoteAPIClient()
+sim = client.getObject('sim')
 
 # # Step 2: Get the object handle for the Cuboid
 # floorHandle = sim.getObject('/Floor')
@@ -167,44 +167,70 @@ import time
 # # Stop simulation after time
 # sim.stopSimulation()
 
-def move_to_grid(x, y, z, width=0.25, height=0.25):
-    '''Moves Coppelia coordinates (x,y,z) to a 40x40 grid, keeping only valid points.'''
+# def move_to_grid(x, y, z, width=0.25, height=0.25):
+#     '''Moves Coppelia coordinates (x,y,z) to a 40x40 grid, keeping only valid points.'''
     
-    # Translate x, y coordinate 2.5 up and 2.5 right
-    x = x + 2.5
-    y = y + 2.5
+#     # Translate x, y coordinate 2.5 up and 2.5 right
+#     x = x + 2.5
+#     y = y + 2.5
     
-    # Convert x, y to grid indices
-    x_grid = round(x / 0.25)
-    y_grid = round(y / 0.25)
+#     # Convert x, y to grid indices
+#     x_grid = round(x / 0.25)
+#     y_grid = round(y / 0.25)
 
-    # Check if center is within valid grid bounds
-    if 0 <= x_grid <= 40 and 0 <= y_grid <= 40:
-        return [(x_grid, y_grid)]  # Return as a list (single valid center)
+#     # Check if center is within valid grid bounds
+#     if 0 <= x_grid <= 40 and 0 <= y_grid <= 40:
+#         return [(x_grid, y_grid)]  # Return as a list (single valid center)
 
-    # Otherwise, check boundary points
-    boundary_points = [
-        (x + width / 2, y + height / 2),
-        (x + width / 2, y - height / 2),
-        (x - width / 2, y + height / 2),
-        (x - width / 2, y - height / 2)
-    ]
+#     # Otherwise, check boundary points
+#     boundary_points = [
+#         (x + width / 2, y + height / 2),
+#         (x + width / 2, y - height / 2),
+#         (x - width / 2, y + height / 2),
+#         (x - width / 2, y - height / 2)
+#     ]
 
-    valid_points = []
-    for bx, by in boundary_points:
-        bx_grid = round(bx / 0.25)
-        by_grid = round(by / 0.25)
-        if 0 <= bx_grid <= 40 and 0 <= by_grid <= 40:
-            valid_points.append((bx_grid, by_grid))
+#     valid_points = []
+#     for bx, by in boundary_points:
+#         bx_grid = round(bx / 0.25)
+#         by_grid = round(by / 0.25)
+#         if 0 <= bx_grid <= 40 and 0 <= by_grid <= 40:
+#             valid_points.append((bx_grid, by_grid))
 
-    return valid_points if valid_points else "Invalid object position!"
+#     return valid_points if valid_points else "Invalid object position!"
 
-def grid_to_coordinates(x_grid, y_grid, z):
-    '''Converts a valid 40x40 grid point back to Coppelia coordinates.'''
+# def grid_to_coordinates(x_grid, y_grid, z):
+#     '''Converts a valid 40x40 grid point back to Coppelia coordinates.'''
     
-    if 0 <= x_grid <= 40 and 0 <= y_grid <= 40:
-        x = x_grid * 0.25 - 2.5
-        y = y_grid * 0.25 - 2.5
-        return (x, y, z)
+#     if 0 <= x_grid <= 40 and 0 <= y_grid <= 40:
+#         x = x_grid * 0.25 - 2.5
+#         y = y_grid * 0.25 - 2.5
+#         return (x, y, z)
     
-    return "Invalid grid point!"
+#     return "Invalid grid point!"
+
+def move_to_grid(x, y, z):
+    # Moves Coppelia coordinates (x,y,z) to a 40x40 grid, keeping only valid points.
+
+    # Walls become negative when move directly to grid
+
+    # Make separate function called wall_locations and take two non-negative locations, consider it walls
+    pass
+
+def get_obstacle_position(obstacle_name):
+    
+    obstacleHandle = sim.getObject(f'/{obstacle_name}')
+
+    if obstacleHandle == -1:
+        raise Exception(f"Obstacle '{obstacle_name}' not found.")
+    
+    obstaclePosition = sim.getObjectPosition(obstacleHandle, -1)
+
+    roundedPosition = [round(coord, 3) for coord in obstaclePosition]
+
+    print(f"Position of {obstacle_name}: {roundedPosition}")
+    return roundedPosition
+
+# Idea for Beziér curve, interpolate using quaternions to determine shape of curve
+
+    
