@@ -1,6 +1,7 @@
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 import numpy as np
 import time
+from math import comb
 
 # Step 1: Create a client and get handles
 client = RemoteAPIClient()
@@ -8,10 +9,13 @@ sim = client.getObject('sim')
 
 # Step 2: Get the object handle for the Cuboid
 floorHandle = sim.getObject('/Floor')
+cuboidHandle = sim.getObject('/Agent')
+
+# Flattened list of control points (position + quaternion)
 ctrlPts = [
-    0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0,
-    0.5, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0,  # Start point (position and neutral orientation)
-    1.0, 1.0, 0.05, 0.0, 0.0, 0.0, 1.0   # End point (position and neutral orientation)
+    0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0,  # Start point
+    0.5, 0.75, 0.05, 0.0, 0.0, 0.0, 1.0,  # Middle control point
+    1.0, 1.0, 0.05, 0.0, 0.0, 0.0, 1.0   # End point
 ]
 
 # Create the path
@@ -19,28 +23,35 @@ pathHandle = sim.createPath(
     ctrlPts,   # Control points defining the path
     0,         # Options (bit0 is not set, meaning path is open)
     100,       # Subdivision (number of points to create along the path for smoother interpolation)
-    1,       # Smoothness (Bezier interpolation is off for a linear path)
+    1,         # Smoothness
     0,         # Orientation mode (x-axis along path, y-axis is up)
-    [0.0, 0.0, 1.0],  # Up vector for path orientation 
+    [0.0, 0.0, 1.0],  # Up vector for path orientation
 )
 
+# Set the path's parent to the floor
 sim.setObjectParent(pathHandle, floorHandle, True)
 
-# Get the handle of the previously created path and cuboid
-cuboidHandle = sim.getObject('/Cuboid')
+# Define fixed Z value
+fixedZ = 0.05  # The fixed Z coordinate value
 
-# Initialize path data
-pathData = sim.unpackDoubleTable(sim.getBufferProperty(pathHandle, 'customData.PATH'))
-m = np.array(pathData).reshape(len(pathData) // 7, 7)
-pathPositions = m[:, :3].flatten().tolist()
-pathQuaternions = m[:, 3:].flatten().tolist()
+# Recursive Bezier calculation
+def bezier_recursive(ctrlPts, t):
+    n = (len(ctrlPts) // 7) - 1  # Calculate based on control points (7 values per point: x, y, z + quaternion)
+    point = np.zeros(3)  # We are only interested in the (x, y, z) positions for movement
+    
+    # Calculate the weighted sum of all control points (only x, y, z for now)
+    for i in range(n + 1):
+        binomial_coeff = comb(n, i)
+        weight = binomial_coeff * ((1 - t) ** (n - i)) * (t ** i)
+        point += weight * np.array(ctrlPts[i * 7:i * 7 + 3])  # Only use the position (x, y, z)
+    
+    return point
 
-# Get path lengths and other variables
-pathLengths, totalLength = sim.getPathLengths(pathPositions, 3)
+# Get total path length for time scaling
+totalLength = 1.0  # Normalized, 0 <= t <= 1 for Bezier curves
 velocity = 0.04  # m/s
 posAlongPath = 0
 previousSimulationTime = 0
-fixedZ = 0.05  # The fixed Z coordinate value
 
 # Initialize function (formerly sysCall_init)
 def init():
@@ -48,22 +59,20 @@ def init():
     posAlongPath = 0
     previousSimulationTime = sim.getSimulationTime()
 
-# Main loop to simulate path following (formerly sysCall_thread)
+# Main loop to simulate path following
 def follow_path():
     global posAlongPath, previousSimulationTime
     while not sim.getSimulationStopping():
         t = sim.getSimulationTime()
         deltaT = t - previousSimulationTime
 
-        # Skip the first step if deltaT is 0
         if deltaT <= 0.0:
             previousSimulationTime = t
             continue
 
-        # Calculate the remaining distance and adjust velocity
+        # Calculate remaining path and adjusted velocity
         remainingPath = totalLength - posAlongPath
         adjustedVelocity = min(velocity, remainingPath / deltaT)
-
         posAlongPath += adjustedVelocity * deltaT
 
         if posAlongPath >= totalLength - 0.001:
@@ -71,23 +80,20 @@ def follow_path():
             print("Reached the end of the path!")
             break
 
-        # Interpolate position along the path (x and y) and fix z at fixedZ
+        # Normalize the position along the path to get t for Bezier interpolation
         t_norm = posAlongPath / totalLength
-        startPos = np.array([0.0, 0.0])  # Starting position (x, y)
-        endPos = np.array([1.0, 1.0])    # Ending position (x, y)
-        interpolatedPosXY = (1 - t_norm) * startPos + t_norm * endPos
+        interpolatedPos = bezier_recursive(ctrlPts, t_norm)
+        interpolatedPos[2] = fixedZ  # Force Z coordinate to fixed value
 
-        # Combine the interpolated x and y with the fixed z
-        interpolatedPos = np.append(interpolatedPosXY, fixedZ)
-
-        # Set object position and orientation
-        sim.setObjectPosition(cuboidHandle, -1, interpolatedPos.tolist())  # -1 means relative to world
+        # Set object position to the interpolated Bezier position
+        sim.setObjectPosition(cuboidHandle, -1, interpolatedPos.tolist())
+        
+        # Keep the orientation fixed to avoid jittering
         sim.setObjectQuaternion(cuboidHandle, -1, [0.0, 0.0, 0.0, 1.0])
 
         # Update the previous simulation time
         previousSimulationTime = t
 
-        # Step the simulation
         sim.step()
         time.sleep(0.05)
 
@@ -98,54 +104,70 @@ sim.startSimulation()
 init()
 follow_path()
 
-# Stop the simulation after 10 seconds (adjust as needed)
+# Stop the simulation after 10 seconds
 time.sleep(10)
 sim.stopSimulation()
 
 
-def move_to_grid(x, y, z):
-    '''Moves coppelia coordinates (x,y,z) to a 40x40 grid, z coordinate remains constant, outputs coordinate in terms of grid'''
+
+# def move_to_grid(x, y, z):
+#     '''Moves coppelia coordinates (x,y,z) to a 40x40 grid, z coordinate remains constant, outputs coordinate in terms of grid'''
     
-    # Translate x,y coordinate 2.5 up and 2.5 right
-    x = x + 2.5
-    y = y + 2.5
+#     # Translate x,y coordinate 2.5 up and 2.5 right
+#     x = x + 2.5
+#     y = y + 2.5
     
-    # Ensure coordinates (x,y) are within (0,0) and (5,5)
-    if x > 5 or x < 0:
-        return "Invalid x coordinate!"
-    elif y > 5 or y < 0:
-        return "Invalid y coordinate!"
+#     # Ensure coordinates (x,y) are within (0,0) and (5,5)
+#     if x > 5 or x < 0:
+#         return "Invalid x coordinate!"
+#     elif y > 5 or y < 0:
+#         return "Invalid y coordinate!"
     
-    # Convert x, y to grid indices by dividing by 0.05 (since each grid cell is 0.05 wide)
-    x_grid = round(x / 0.25)
-    y_grid = round(y / 0.25)
+#     # Convert x, y to grid indices by dividing by 0.05 (since each grid cell is 0.05 wide)
+#     x_grid = round(x / 0.125)
+#     y_grid = round(y / 0.125)
     
-    # Ensure that the coordinates are within valid grid range (0 to 200)
-    if x_grid > 40 or x_grid < 0:
-        return "Invalid x grid point!"
-    if y_grid > 40 or y_grid < 0:
-        return "Invalid y grid point!"
+#     # Ensure that the coordinates are within valid grid range (0 to 200)
+#     if x_grid > 40 or x_grid < 0:
+#         return "Invalid x grid point!"
+#     if y_grid > 40 or y_grid < 0:
+#         return "Invalid y grid point!"
     
-    # Return the grid indices
-    return (x_grid, y_grid)
+#     # Return the grid indices
+#     return (x_grid, y_grid)
 
     
-def grid_to_coordinates(x_grid, y_grid, z):
-    '''Converts a valid 200x200 grid point back into coppelia (x,y,z) coordinates in the range (x,y) = (0,0)-(5,5), z remains constant'''
+# def grid_to_coordinates(x_grid, y_grid, z):
+#     '''Converts a valid 200x200 grid point back into coppelia (x,y,z) coordinates in the range (x,y) = (0,0)-(5,5), z remains constant'''
     
-    # Ensure the grid points are within valid range (0 to 200)
-    if x_grid > 40 or x_grid < 0:
-        return "Invalid x grid point!"
-    if y_grid > 40 or y_grid < 0:
-        return "Invalid y grid point!"
+#     # Ensure the grid points are within valid range (0 to 200)
+#     if x_grid > 40 or x_grid < 0:
+#         return "Invalid x grid point!"
+#     if y_grid > 40 or y_grid < 0:
+#         return "Invalid y grid point!"
     
-    # Reverse the grid index conversion by multiplying by 0.05
-    x = x_grid * 0.25
-    y = y_grid * 0.25
+#     # Reverse the grid index conversion by multiplying by 0.05
+#     x = x_grid * 0.125
+#     y = y_grid * 0.125
     
-    # Return the original (x, y, z) coordinates
-    return (x, y, z)   
+#     # Return the original (x, y, z) coordinates
+#     return (x, y, z)   
     
-danger_spots = [move_to_grid(1.15,-1.35,0),move_to_grid(0.85,-1.35,0),move_to_grid(1.15,-1.65,0),move_to_grid(0.85,-1.65,0),move_to_grid(1.9,0.15,0),move_to_grid(1.6,0.15,0),move_to_grid(1.6,-0.15,0),move_to_grid(1.9,-0.15,0),move_to_grid(1.15,1.4,0),move_to_grid(0.85,1.4,0),move_to_grid(1.15,1.05,0),move_to_grid(0.85,1.05,0),move_to_grid(-1.35,1.15,0),move_to_grid(-1.65,1.15,0),move_to_grid(-1.35,0.85,0),move_to_grid(-1.65,0.85,0),move_to_grid(-1.35,1.15,0),move_to_grid(-1.65,1.15,0),move_to_grid(-1.35,0.85,0),move_to_grid(-1.65,0.85,0)]
 
-# print(danger_spots)
+# def get_object_position(object_name):
+#     # Step 2: Get the object handle by name
+#     objectHandle = sim.getObject(f'/{object_name}')
+    
+#     if objectHandle == -1:
+#         raise Exception(f"Object '{object_name}' not found.")
+    
+#     # Step 3: Get the position of the obstacle relative to the world (-1 means world reference)
+#     objectPosition = sim.getObjectPosition(objectHandle, -1)
+    
+#     # Round each element in the position to the nearest thousandth
+#     roundedPosition = [round(coord, 3) for coord in objectPosition]
+    
+#     print(f"Position of {object_name}: {roundedPosition}")
+#     return roundedPosition
+
+
