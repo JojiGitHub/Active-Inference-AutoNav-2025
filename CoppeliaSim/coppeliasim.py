@@ -11,21 +11,28 @@ sim = client.getObject('sim')
 floorHandle = sim.getObject('/Floor')
 cuboidHandle = sim.getObject('/Agent')
 
-# Flattened list of control points (position + quaternion)
+# Step 3: Define the control points (flattened list with position and quaternion values)
+# Add more control points for a longer path
+# Control points with more than 3 points
 ctrlPts = [
-    0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0,  # Start point
-    0.5, 0.75, 0.05, 0.0, 0.0, 0.0, 1.0,  # Middle control point
-    1.0, 1.0, 0.05, 0.0, 0.0, 0.0, 1.0   # End point
+    [0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0],  # Start point
+    [0.5, 0.75, 0.05, 0.0, 0.0, 0.0, 1.0],  # Second point
+    [1.0, 1.0, 0.05, 0.0, 0.0, 0.0, 1.0],  # Third point
+    [1.5, 1.5, 0.05, 0.0, 0.0, 0.0, 1.0],  # Fourth point
+    [2.0, 2.0, 0.05, 0.0, 0.0, 0.0, 1.0]   # Fifth point (New endpoint)
 ]
 
-# Create the path
+# Flatten the control points into a single list
+ctrlPts_flattened = [coord for point in ctrlPts for coord in point]
+
+# Create the path with more than 3 control points
 pathHandle = sim.createPath(
-    ctrlPts,   # Control points defining the path
-    0,         # Options (bit0 is not set, meaning path is open)
-    100,       # Subdivision (number of points to create along the path for smoother interpolation)
-    1,         # Smoothness
-    0,         # Orientation mode (x-axis along path, y-axis is up)
-    [0.0, 0.0, 1.0],  # Up vector for path orientation
+    ctrlPts_flattened,  # Flattened control points list
+    0,                  # Options (bit0 is not set, meaning path is open)
+    100,                # Subdivision (number of points to create along the path for smoother interpolation)
+    1,                  # Smoothness
+    0,                  # Orientation mode (x-axis along path, y-axis is up)
+    [0.0, 0.0, 1.0]     # Up vector for path orientation
 )
 
 # Set the path's parent to the floor
@@ -45,23 +52,46 @@ def bezier_recursive(ctrlPts, t):
         weight = binomial_coeff * ((1 - t) ** (n - i)) * (t ** i)
         point += weight * np.array(ctrlPts[i * 7:i * 7 + 3])  # Only use the position (x, y, z)
     
+    # Debug: Print intermediate points calculated by Bezier interpolation
+    print(f"Bezier Point at t={t}: {point}")
+    
     return point
 
-# Get total path length for time scaling
-totalLength = 1.0  # Normalized, 0 <= t <= 1 for Bezier curves
-velocity = 0.04  # m/s
+# New function to calculate the total length of the Bezier curve
+# New function to calculate the total length of the Bezier curve
+def calculate_total_length(ctrlPts_flattened, subdivisions=100):
+    total_length = 0.0
+    prev_point = np.array(ctrlPts_flattened[:3])  # Start at the first control point (only x, y, z)
+    
+    for i in range(1, subdivisions + 1):
+        t = i / subdivisions
+        curr_point = bezier_recursive(ctrlPts_flattened, t)
+        total_length += np.linalg.norm(curr_point - prev_point)  # Add the distance between points
+        prev_point = curr_point  # Update prev_point to the current point
+    
+    return total_length
+
+
+# Global variables for position and timing
+totalLength = 0
 posAlongPath = 0
 previousSimulationTime = 0
 
 # Initialize function (formerly sysCall_init)
 def init():
-    global posAlongPath, previousSimulationTime
+    global posAlongPath, previousSimulationTime, totalLength
+
+    # Recalculate total length of the path before starting the movement
+    totalLength = calculate_total_length(ctrlPts_flattened)  # Use dynamic calculation for total length
+    print(f"Total Path Length: {totalLength}")  # Debug: Print total length of the path
     posAlongPath = 0
     previousSimulationTime = sim.getSimulationTime()
 
 # Main loop to simulate path following
 def follow_path():
     global posAlongPath, previousSimulationTime
+    velocity = 0.04  # m/s
+
     while not sim.getSimulationStopping():
         t = sim.getSimulationTime()
         deltaT = t - previousSimulationTime
@@ -82,8 +112,11 @@ def follow_path():
 
         # Normalize the position along the path to get t for Bezier interpolation
         t_norm = posAlongPath / totalLength
-        interpolatedPos = bezier_recursive(ctrlPts, t_norm)
+        interpolatedPos = bezier_recursive(ctrlPts_flattened, t_norm)
         interpolatedPos[2] = fixedZ  # Force Z coordinate to fixed value
+
+        # Debug: Print the interpolated position being set
+        print(f"Setting object position to: {interpolatedPos}")
 
         # Set object position to the interpolated Bezier position
         sim.setObjectPosition(cuboidHandle, -1, interpolatedPos.tolist())
@@ -97,16 +130,22 @@ def follow_path():
         sim.step()
         time.sleep(0.05)
 
+# Initialize path data and other variables before simulation
+init()
+
 # Start the simulation
 sim.startSimulation()
 
-# Initialize and run the path-following function
-init()
+# Run the path-following function
 follow_path()
 
 # Stop the simulation after 10 seconds
 time.sleep(10)
 sim.stopSimulation()
+
+
+
+
 
 
 
