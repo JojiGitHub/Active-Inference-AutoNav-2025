@@ -11,16 +11,10 @@ sim = client.getObject('sim')
 bubbleRobHandle = sim.getObject('/bubbleRob')
 
 # Step 3: Define the control points (with the full formatting)
-ctrlPts = [
-    [0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0],  # Start point
-    [-0.5, 0.75, 0.05, 0.0, 0.0, 0.0, 1.0],  # Second point
-    [-1.5, 1.0, 0.05, 0.0, 0.0, 0.0, 1.0],  # Third point
-    [-2, 1.5, 0.05, 0.0, 0.0, 0.0, 1.0],  # Fourth point
-    [-2.25, 2.0, 0.05, 0.0, 0.0, 0.0, 1.0]   # Fifth point
-]
+ctrlPts = [[0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0], [0.125, 0.0, 0.05, 0.0, 0.0, 0.0, 1.0]]
 
 ctrlPts_flattened = [coord for point in ctrlPts for coord in point]
-
+print(ctrlPts_flattened)
 # Get initial object properties
 def get_initial_object_properties(objectHandle):
     initial_pos = sim.getObjectPosition(objectHandle, -1)
@@ -122,7 +116,6 @@ def follow_path():
         
         # Calculate normalized parameter
         t_norm = np.clip(posAlongPath / totalLength, 0, 1)
-        
         # Get current position and tangent
         current_pos, tangent = get_point_and_tangent(t_norm)
         
