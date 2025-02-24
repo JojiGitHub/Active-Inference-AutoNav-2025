@@ -58,39 +58,30 @@ def bezier_recursive(ctrlPts, t):
     return point
 
 # Calculate total path length with more precise sampling
-def calculate_total_length(ctrlPts_flattened, subdivisions=1000):
+def calculate_total_length(ctrl_points, subdivisions=1000):
     total_length = 0.0
-    prev_point = bezier_recursive(ctrlPts_flattened, 0)
+    prev_point = bezier_recursive(ctrl_points, 0)
     for i in range(1, subdivisions + 1):
-
-        print(f"prev_point {prev_point}")
-
         t = i / subdivisions
-
-        curr_point = bezier_recursive(ctrlPts_flattened, t)
-        print(f"currr_point {curr_point}")
-
-        print(f"is this always 0 lol {np.linalg.norm(curr_point - prev_point)}")     
-
+        curr_point = bezier_recursive(ctrl_points, t)
         total_length += np.linalg.norm(curr_point - prev_point)
-        print(f"total_length = {total_length}")
-
         prev_point = curr_point
     return total_length
 
+# Initial calculation
 totalLength = calculate_total_length(ctrlPts_flattened)
 posAlongPath = 0
 velocity = 0.08
 
 # Calculate point and tangent at given parameter
-def get_point_and_tangent(t):
+def get_point_and_tangent(t, ctrl_points):
     # Get current point
-    point = bezier_recursive(ctrlPts_flattened, t)
+    point = bezier_recursive(ctrl_points, t)
     
     # Calculate tangent using small delta
     delta = 0.001
     t_next = min(1.0, t + delta)
-    next_point = bezier_recursive(ctrlPts_flattened, t_next)
+    next_point = bezier_recursive(ctrl_points, t_next)
     
     tangent = next_point - point
     if np.linalg.norm(tangent) > 0:
@@ -106,11 +97,17 @@ def update_orientation(position, tangent):
         sim.setObjectQuaternion(bubbleRobHandle, -1, orientation_quaternion)
 
 # Modified simulation loop with precise path following
-def follow_path():
-    global posAlongPath, velocity, totalLength
+def follow_path(ctrl_points):
+    global posAlongPath, velocity
+    
+    # Calculate total length for current control points
+    total_length = calculate_total_length(ctrl_points)
+    # Reset position along path for new path
+    posAlongPath = 0
+    
     previousSimulationTime = sim.getSimulationTime()
     
-    while posAlongPath < totalLength:
+    while posAlongPath < total_length:
         t = sim.getSimulationTime()
         deltaT = t - previousSimulationTime
         
@@ -120,15 +117,15 @@ def follow_path():
         
         posAlongPath += velocity * deltaT
         
-        if posAlongPath >= totalLength - 0.001:
-            posAlongPath = totalLength
+        if posAlongPath >= total_length - 0.001:
+            posAlongPath = total_length
             print("Reached the end of the path!")
             break
         
         # Calculate normalized parameter
-        t_norm = np.clip(posAlongPath / totalLength, 0, 1)
+        t_norm = np.clip(posAlongPath / total_length, 0, 1)
         # Get current position and tangent
-        current_pos, tangent = get_point_and_tangent(t_norm)
+        current_pos, tangent = get_point_and_tangent(t_norm, ctrl_points)
         
         # Ensure Z coordinate
         current_pos[2] = initial_z
@@ -143,7 +140,7 @@ def follow_path():
 
 # Start simulation
 sim.startSimulation()
-follow_path()
+follow_path(ctrlPts_flattened)
 time.sleep(10)
 sim.step()
 ctrlPts.append([2,0,0.05,0,0,0,1])
@@ -158,39 +155,5 @@ pathHandle = sim.createPath(
 )
 sim.step()
 
-def follow_path():
-    global posAlongPath, velocity, totalLength
-    previousSimulationTime = sim.getSimulationTime()
-    
-    while posAlongPath < totalLength:
-        t = sim.getSimulationTime()
-        deltaT = t - previousSimulationTime
-        
-        if deltaT <= 0.0:
-            previousSimulationTime = t
-            continue
-        
-        posAlongPath += velocity * deltaT
-        
-        if posAlongPath >= totalLength - 0.001:
-            posAlongPath = totalLength
-            print("Reached the end of the path!")
-            break
-        
-        # Calculate normalized parameter
-        t_norm = np.clip(posAlongPath / totalLength, 0, 1)
-        # Get current position and tangent
-        current_pos, tangent = get_point_and_tangent(t_norm)
-        
-        # Ensure Z coordinate
-        current_pos[2] = initial_z
-        
-        # Update position and orientation
-        sim.setObjectPosition(bubbleRobHandle, -1, current_pos.tolist())
-        update_orientation(current_pos, tangent)
-        
-        previousSimulationTime = t
-        sim.step()
-        time.sleep(0.05)
-
-follow_path()
+# Call follow_path with the new control points
+follow_path(ctrlPts_flattened)
