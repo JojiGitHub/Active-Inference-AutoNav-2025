@@ -9,7 +9,7 @@ action_dim = 5
 agent = ImprovedDQNAgent(state_dim=state_dim, action_dim=action_dim)
 
 # Load the model exactly as saved
-checkpoint = torch.load("best_model.pth")
+checkpoint = torch.load("RL_Agent/best_model.pth")
 agent.q_network.load_state_dict(checkpoint['q_network_state_dict'])
 agent.target_network.load_state_dict(checkpoint['target_network_state_dict'])
 agent.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
