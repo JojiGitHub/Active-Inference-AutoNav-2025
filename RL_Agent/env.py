@@ -20,7 +20,8 @@ class GridWorldEnv():
                  grid_dimensions=[40, 40]):
         self.grid_dimensions = grid_dimensions
         self.action_space = spaces.Discrete(5)
-        self.observation_space = spaces.Box(low=0, high=2, shape=(17,), dtype=np.float32)
+        # Updated observation space to include agent and goal coordinates (4 additional values)
+        self.observation_space = spaces.Box(low=0, high=max(grid_dimensions), shape=(21,), dtype=np.float32)
         
         self.agent_x, self.agent_y = initial_position
         self.initial_position = initial_position
@@ -71,7 +72,18 @@ class GridWorldEnv():
                 color = 0.0  # White
             visible_colors.append(color)
         
-        return visible_colors
+        # Adding agent and goal coordinates to the state
+        goal_x, goal_y = self.goal_position
+        # Add agent's coordinates and goal's coordinates to the state
+        coordinates_info = [
+            float(agent_x), 
+            float(agent_y), 
+            float(goal_x), 
+            float(goal_y)
+        ]
+        
+        # Combine visible colors and coordinate information
+        return visible_colors + coordinates_info
 
     def step(self, action):
         old_position = (self.agent_x, self.agent_y)

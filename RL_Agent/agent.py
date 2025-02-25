@@ -8,12 +8,15 @@ class EnhancedDQN(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(EnhancedDQN, self).__init__()
         
-        # Very simple network since we want direct state-action mapping
+        # Updated network to handle 21-element state vector (17 visible cells + 4 coordinates)
         self.feature_net = nn.Sequential(
-            nn.Linear(17, 32),
+            nn.Linear(21, 64),  # Increased input size and first layer size
+            nn.ReLU(),
+            nn.LayerNorm(64),
+            nn.Linear(64, 32),  # Added an additional layer for more capacity
             nn.ReLU(),
             nn.LayerNorm(32),
-            nn.Linear(32, action_dim)  # Direct mapping to actions
+            nn.Linear(32, action_dim)
         )
         
     def forward(self, state):

@@ -4,7 +4,7 @@ from agent import ImprovedDQNAgent, PrioritizedReplayBuffer
 from env import GridWorldEnv  # Import your environment class
 
 # Hyperparameters
-state_dim = 17
+state_dim = 21  # Updated from 17 to 21 to include agent and goal coordinates
 action_dim = 5
 batch_size = 64
 lr = 0.001
