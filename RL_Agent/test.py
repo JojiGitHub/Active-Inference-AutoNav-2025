@@ -4,7 +4,7 @@ from env import GridWorldEnv
 from agent import ImprovedDQNAgent
 
 # Load the best model and verify settings
-state_dim = 17
+state_dim = 21  # Updated from 17 to 21 to include agent and goal coordinates
 action_dim = 5
 agent = ImprovedDQNAgent(state_dim=state_dim, action_dim=action_dim)
 
@@ -61,7 +61,10 @@ for test_episode in range(num_test_episodes):
         print(f"Reward: {reward:.2f}")
         print(f"Total Reward So Far: {total_reward:.2f}")
         
-        visible_area = state
+        # Updated to split the state representation
+        visible_area = state[:17]  # First 17 elements are the visible cells
+        coordinates = state[17:]   # Last 4 elements are coordinates
+        
         print("\nVisible Area Colors:")
         for i, color in enumerate(visible_area):
             if color > 0:
@@ -70,6 +73,10 @@ for test_episode in range(num_test_episodes):
                     2.0: "GREEN (GOAL)"
                 }.get(color, "UNKNOWN")
                 print(f"Cell {i}: {color_type}")
+                
+        print("\nCoordinate Information:")
+        print(f"Agent position (x, y): ({coordinates[0]}, {coordinates[1]})")
+        print(f"Goal position (x, y): ({coordinates[2]}, {coordinates[3]})")
         
         print(f"Done: {done}")
         print("="*50 + "\n")
