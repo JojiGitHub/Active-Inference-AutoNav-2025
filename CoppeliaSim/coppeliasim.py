@@ -2,10 +2,103 @@ from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 import numpy as np
 import time
 from math import comb
+import random
 
 # Step 1: Create a client and get handles
 client = RemoteAPIClient()
 sim = client.getObject('sim')
+
+def move_to_grid(x, y):
+    '''Moves coppelia coordinates (x,y) to a 40x40 grid, z coordinate remains constant, outputs coordinate in terms of grid'''
+    
+    # Translate x,y coordinate 2.5 up and 2.5 right
+    x = x + 2.5
+    y = y + 2.5
+    
+    # Ensure coordinates (x,y) are within (0,0) and (5,5)
+    if x > 5 or x < 0:
+        return "Invalid x coordinate!"
+    elif y > 5 or y < 0:
+        return "Invalid y coordinate!"
+    
+    # Convert x, y to grid indices by dividing by 0.05 (since each grid cell is 0.05 wide)
+    x_grid = round(x / 0.125)
+    y_grid = round(y / 0.125)
+    
+    # Ensure that the coordinates are within valid grid range (0 to 200)
+    if x_grid > 40 or x_grid < 0:
+        return "Invalid x grid point!"
+    if y_grid > 40 or y_grid < 0:
+        return "Invalid y grid point!"
+    
+    # Return the grid indices
+    return (x_grid, y_grid)
+
+    
+def grid_to_coordinates(x_grid, y_grid):
+    '''Converts a valid 200x200 grid point back into coppelia (x,y,z) coordinates in the range (x,y) = (0,0)-(5,5), z remains constant'''
+    # Ensure the grid points are within valid range (0 to 200)
+    if x_grid > 40 or x_grid < 0:
+        return "Invalid x grid point!"
+    if y_grid > 40 or y_grid < 0:
+        return "Invalid y grid point!"
+    
+    # Reverse the grid index conversion by multiplying by 0.05
+    x = x_grid * 0.125
+    y = y_grid * 0.125
+    
+    x = x-2.5
+    y = y-2.5
+    # Return the original (x, y, z) coordinates
+    return (x, y, 0.05)   
+
+def get_object_position(object_name):
+    # Step 2: Get the object handle by name
+    objectHandle = sim.getObject(f'/{object_name}')
+    
+    if objectHandle == -1:
+        raise Exception(f"Object '{object_name}' not found.")
+    
+    # Step 3: Get the position of the obstacle relative to the world (-1 means world reference)
+    objectPosition = sim.getObjectPosition(objectHandle, -1)
+    
+    # Round each element in the position to the nearest thousandth
+    roundedPosition = [round(coord, 3) for coord in objectPosition]
+    
+    print(f"Coppelia position of {object_name}: {roundedPosition}")
+    return roundedPosition
+
+def create_bounding_locations(position, dimensions):
+    (x, y) = position
+    (a, b, c) = dimensions
+
+    # Bounding locations
+    top_right = (x + a/2, y + b/2)
+    bottom_left = (x - a/2, y - b/2)
+    top_left = (x - a/2, y + b/2)
+    bottom_right = (x + a/2, y - b/2)
+
+    # Midpoints
+    mid_top = ((top_right[0] + top_left[0]) / 2, (top_right[1] + top_left[1]) / 2)
+    mid_bottom = ((bottom_right[0] + bottom_left[0]) / 2, (bottom_right[1] + bottom_left[1]) / 2)
+    mid_left = ((top_left[0] + bottom_left[0]) / 2, (top_left[1] + bottom_left[1]) / 2)
+    mid_right = ((top_right[0] + bottom_right[0]) / 2, (top_right[1] + bottom_right[1]) / 2)
+    
+
+    return top_right, bottom_left, top_left, bottom_right, mid_top, mid_bottom, mid_left, mid_right
+
+        
+def check_bounds(loc):
+    '''Checks if a location is within the bounds of the grid'''
+    
+    x, y, z = loc
+    if x > 5 or x < 0:
+        return None
+    elif y > 5 or y < 0:
+        return None
+    else:
+        return loc
+
 
 def create_cuboid(dimensions, position, orientation=None, color=None, mass=0, respondable=False, name="cuboid"):
     """
@@ -68,89 +161,200 @@ def create_cuboid(dimensions, position, orientation=None, color=None, mass=0, re
         sim.setShapeColor(cuboid_handle, None, 0, color)  # 0 = ambient/diffuse color component
     
     return cuboid_handle
+#Random positional value between 0+dim[index of coordinate(x = 0,y=1)] and 5-dim[index of coordinate]
+def initialize_environment():
+    obstacle_positions = []
+    obstacle_handles = []
+    obstacle_dimensions = [0.3, 0.3, 0.8]  # Same dimensions for all obstacles
+    
+    # Function to check if a new position conflicts with existing obstacles
+    def is_position_valid(new_x, new_y, object_dimensions):
+        # Convert position and dimensions to format needed for bounding locations
+        new_position = (new_x, new_y)
+        
+        # Get bounding points for the new obstacle
+        new_bounds = create_bounding_locations(new_position, object_dimensions)
+        new_top_right, new_bottom_left, _, _, _, _, _, _ = new_bounds
+        
+        # Check if the new obstacle would be inside the room bounds
+        if (new_x + object_dimensions[0]/2 > 2.5 or 
+            new_x - object_dimensions[0]/2 < -2.5 or
+            new_y + object_dimensions[1]/2 > 2.5 or
+            new_y - object_dimensions[1]/2 < -2.5):
+            return False
+        
+        # Check against all existing obstacles
+        for pos in obstacle_positions:
+            existing_x, existing_y = pos[0], pos[1]
+            existing_position = (existing_x, existing_y)
+            
+            # Get bounding points for existing obstacle
+            existing_bounds = create_bounding_locations(existing_position, obstacle_dimensions)
+            existing_top_right, existing_bottom_left, _, _, _, _, _, _ = existing_bounds
+            
+            # Check for overlap using AABB collision detection
+            # If one rectangle is to the left of the other
+            if (new_top_right[0] < existing_bottom_left[0] or 
+                existing_top_right[0] < new_bottom_left[0]):
+                continue
+                
+            # If one rectangle is above the other
+            if (new_top_right[1] < existing_bottom_left[1] or 
+                existing_top_right[1] < new_bottom_left[1]):
+                continue
+                
+            # If we get here, the rectangles overlap
+            return False
+            
+        # If we've checked all obstacles and found no overlaps
+        return True
+    
+    # Create 5 obstacles
+    for i in range(5):
+        # Try to find a valid position (up to 100 attempts)
+        valid_position = False
+        attempts = 0
+        
+        while not valid_position and attempts < 100:
+            # Generate random position
+            x = round(random.uniform(-2.5 + (obstacle_dimensions[0]/2 + 0.1), 
+                                     2.5 - (obstacle_dimensions[0]/2 + 0.1)), 2)
+            y = round(random.uniform(-2.5 + (obstacle_dimensions[1]/2 + 0.1), 
+                                     2.5 - (obstacle_dimensions[1]/2 + 0.1)), 2)
+            
+            # Check if this position is valid
+            valid_position = is_position_valid(x, y, obstacle_dimensions)
+            attempts += 1
+            
+        if valid_position:
+            # Add position to our list
+            obstacle_positions.append((x, y))
+            
+            # Create the obstacle
+            obstacle = create_cuboid(
+                dimensions=obstacle_dimensions,
+                position=[x, y, 0.4],  # z=0.4 is half the height
+                orientation=[0, 0, 0],
+                color=[1, 0, 0],
+                mass=1,
+                respondable=True,
+                name=f"Obstacle{i}"
+            )
+            
+            obstacle_handles.append(obstacle)
+            print(f"Created Obstacle{i} at position [{x}, {y}, 0.4]")
+        else:
+            print(f"Could not find valid position for Obstacle{i} after {attempts} attempts")
+    
+    # Now create the single flat object with dimensions [0.3, 0.3, 0.01]
+    flat_object_dimensions = [0.3, 0.3, 0.01]
+    valid_position = False
+    attempts = 0
+    flat_object_position = None
+    
+    while not valid_position and attempts < 100:
+        # Generate random position
+        x = round(random.uniform(-2.5 + (flat_object_dimensions[0]/2 + 0.1), 
+                                 2.5 - (flat_object_dimensions[0]/2 + 0.1)), 2)
+        y = round(random.uniform(-2.5 + (flat_object_dimensions[1]/2 + 0.1), 
+                                 2.5 - (flat_object_dimensions[1]/2 + 0.1)), 2)
+        
+        # Check if this position is valid
+        valid_position = is_position_valid(x, y, flat_object_dimensions)
+        attempts += 1
+        
+    if valid_position:
+        # Create the flat object (z=0.005 is half the height of 0.01)
+        flat_object = create_cuboid(
+            dimensions=flat_object_dimensions,
+            position=[x, y, 0.005],  
+            orientation=[0, 0, 0],
+            color=[0, 1, 0],  # Green to distinguish from obstacles
+            mass=0.1,
+            respondable=True,
+            name="Goal_Loc"
+        )
+        
+        flat_object_position = (x, y, 0.005)
+        print(f"Created FlatObject at position [{x}, {y}, 0.005]")
+    else:
+        print(f"Could not find valid position for FlatObject after {attempts} attempts")
+    
+    # Return all obstacle positions as a flat list: [x1, y1, x2, y2, ...] and the flat object position
+    flat_positions = []
+    for pos in obstacle_positions:
+        flat_positions.extend(pos)
+    
+    return flat_positions, flat_object_position, obstacle_handles, flat_object
 
-my_cuboid = create_cuboid(
-    dimensions=[0.3, 0.3, 0.8],
-    position=[1.0, 1.0, 0.15],
-    orientation=[0, 0, 0],
-    color=[1, 0,0],
-    mass=1,
-    respondable=True,
-    name="Obstacle0"
-)
-def get_cuboid_dimensions(object_name):
+def clear_environment(obstacle_handles=None, goal_handle=None):
     """
-    Get the dimensions of a primitive cuboid in CoppeliaSim.
+    Clear all cuboids created by the initialize_environment function
     
     Parameters:
     -----------
-    object_name : str
-        Name of the cuboid object
-        
+    obstacle_handles : list, optional
+        List of handles to obstacle objects
+    goal_handle : int, optional
+        Handle to the goal location object
+    
     Returns:
     --------
-    list
-        [x, y, z] dimensions of the cuboid in meters
+    bool
+        True if all objects were successfully removed
     """
-    # Get the object handle - try both with and without the leading slash
-    try:
-        cuboid_handle = sim.getObject(f'/{object_name}')
-    except:
-        try:
-            cuboid_handle = sim.getObject(object_name)
-        except:
-            print(f"Error: Could not find object named '{object_name}'")
-            return None
+    success = True
     
-    # Get the shape data - newer versions of CoppeliaSim return data differently
-    try:
-        # Try the new API format first
-        result = sim.getShapeGeomInfo(cuboid_handle)
-        
-        # Check the format of the result
-        if isinstance(result, tuple) and len(result) == 2:
-            # New API format: (shape_type, [dim1, dim2, dim3, ...])
-            shape_type, dimensions = result
-            
-            # For cuboids (type 0), return the first 3 values of dimensions
-            if shape_type == 0:  # Cuboid
-                return dimensions[:3]
-            else:
-                print(f"Warning: Object '{object_name}' is not a cuboid (type: {shape_type})")
-                return None
-        else:
-            # Old format or unknown format
-            print(f"Unexpected return format from getShapeGeomInfo: {result}")
-            
-            # Try to handle it anyway
-            if isinstance(result, list) and len(result) >= 4:
-                return result[1:4]
-            else:
-                return None
-    except Exception as e:
-        print(f"Error getting shape geometry: {str(e)}")
-        
-        # Fall back to bounding box method
+    # Remove all obstacles if handles are provided
+    if obstacle_handles:
+        for i, handle in enumerate(obstacle_handles):
+            try:
+                if sim.isHandle(handle):  # Check if handle is valid
+                    sim.removeObject(handle)
+                    print(f"Removed Obstacle{i}")
+            except Exception as e:
+                print(f"Error removing Obstacle{i}: {e}")
+                success = False
+    
+    # Remove goal location if handle is provided
+    if goal_handle:
         try:
-            min_x = sim.getObjectFloatParam(cuboid_handle, sim.objfloatparam_objbbox_min_x)
-            min_y = sim.getObjectFloatParam(cuboid_handle, sim.objfloatparam_objbbox_min_y)
-            min_z = sim.getObjectFloatParam(cuboid_handle, sim.objfloatparam_objbbox_min_z)
-            max_x = sim.getObjectFloatParam(cuboid_handle, sim.objfloatparam_objbbox_max_x)
-            max_y = sim.getObjectFloatParam(cuboid_handle, sim.objfloatparam_objbbox_max_y)
-            max_z = sim.getObjectFloatParam(cuboid_handle, sim.objfloatparam_objbbox_max_z)
-            
-            dimensions = [
-                abs(max_x - min_x),
-                abs(max_y - min_y),
-                abs(max_z - min_z)
-            ]
-            
-            return dimensions
-        except Exception as e2:
-            print(f"Error getting bounding box: {str(e2)}")
-            return None
+            if sim.isHandle(goal_handle):  # Check if handle is valid
+                sim.removeObject(goal_handle)
+                print("Removed Goal_Loc")
+        except Exception as e:
+            print(f"Error removing Goal_Loc: {e}")
+            success = False
+    
+    # Alternative method: try to remove all objects by name
+    # This is useful if handles are not available
+    if not obstacle_handles and not goal_handle:
+        # Try to remove obstacles by name
+        for i in range(5):
+            try:
+                object_handle = sim.getObject(f'/Obstacle{i}')
+                if object_handle != -1:
+                    sim.removeObject(object_handle)
+                    print(f"Removed Obstacle{i} by name")
+            except Exception as e:
+                print(f"Error removing Obstacle{i} by name: {e}")
+                success = False
+        
+        # Try to remove goal by name
+        try:
+            goal_object = sim.getObject('/Goal_Loc')
+            if goal_object != -1:
+                sim.removeObject(goal_object)
+                print("Removed Goal_Loc by name")
+        except Exception as e:
+            print(f"Error removing Goal_Loc by name: {e}")
+            success = False
+    
+    return success
 
-print(get_cuboid_dimensions("Obstacle0"))
+clear_environment()
+
+
 
 
 # Step 2: Get the object handle for the BubbleRob
