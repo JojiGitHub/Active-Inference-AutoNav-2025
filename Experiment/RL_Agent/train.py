@@ -3,6 +3,16 @@ import numpy as np
 from agent import ImprovedDQNAgent, PrioritizedReplayBuffer
 from env import CoppeliaSim, COPPELIA_AVAILABLE
 import time
+import math
+
+# Helper function to calculate Manhattan distance
+def manhattan_distance(pos1, pos2):
+    return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+
+# Helper function to calculate path efficiency
+def calculate_path_efficiency(start_pos, end_pos, actual_steps):
+    optimal_distance = manhattan_distance(start_pos, end_pos)
+    return optimal_distance / max(actual_steps, optimal_distance)
 
 # Hyperparameters
 state_dim = 21  # 21 includes agent and goal coordinates
@@ -54,6 +64,8 @@ for episode in range(num_episodes):
     total_reward = 0
     steps = 0
     reached_goal = False
+    start_position = env.agent_grid_position
+    path_positions = [start_position]  # Track the path taken
     
     while not done and steps < max_timesteps:
         action = agent.select_action(state)
@@ -66,6 +78,7 @@ for episode in range(num_episodes):
         state = next_state
         total_reward += reward
         steps += 1
+        path_positions.append(env.agent_grid_position)
         
         # Check if agent reached goal
         if env.agent_grid_position == env.goal_position:
@@ -90,17 +103,24 @@ for episode in range(num_episodes):
     if episode % 10 == 0:
         env.render()
     
-    # Save only if we reach the goal and get better performance
+    # Save only if we reach the goal and meet performance criteria
     if reached_goal:
+        # Calculate performance metrics
+        initial_distance = manhattan_distance(start_position, env.goal_position)
+        path_efficiency = calculate_path_efficiency(start_position, env.goal_position, steps)
+        obstacle_density = len(env.red_zone_positions) / (env.grid_size[0] * env.grid_size[1])
+        
         # Quick validation with 3 episodes
-        val_rewards = []
+        val_metrics = []
         val_successes = 0
+        
         for _ in range(3):
             val_state = env.reset()
             val_done = False
             val_reward = 0
             val_step_count = 0
             val_reached_goal = False
+            val_start_pos = env.agent_grid_position
             
             while not val_done and val_step_count < max_timesteps:
                 val_action = agent.select_action(val_state)
@@ -112,29 +132,54 @@ for episode in range(num_episodes):
                 
                 if env.agent_grid_position == env.goal_position:
                     val_reached_goal = True
+                    val_efficiency = calculate_path_efficiency(val_start_pos, env.goal_position, val_step_count)
+                    val_metrics.append((val_reward, val_efficiency))
                     break
             
-            val_rewards.append(val_reward)
             if val_reached_goal:
                 val_successes += 1
         
-        val_avg_reward = np.mean(val_rewards)
-        
-        # Save if validation shows consistent goal-reaching
-        if val_successes >= 2 and val_avg_reward > best_reward:  # Must reach goal in at least 2/3 validation runs
-            best_reward = val_avg_reward
-            torch.save({
-                'q_network_state_dict': agent.q_network.state_dict(),
-                'target_network_state_dict': agent.target_network.state_dict(),
-                'optimizer_state_dict': agent.optimizer.state_dict(),
-                'epsilon': agent.epsilon,
-                'episode': episode,
-                'reward': total_reward,
-                'steps': steps,
-                'reached_goal': True
-            }, "best_model.pth")
-            print(f"New best model saved! Reward: {total_reward:.2f}, Steps: {steps}")
-            print(f"Validation success rate: {val_successes}/3")
+        # Calculate composite score considering multiple factors
+        if val_successes >= 2:  # Must reach goal in at least 2/3 validation runs
+            val_avg_reward = np.mean([m[0] for m in val_metrics])
+            val_avg_efficiency = np.mean([m[1] for m in val_metrics])
+            
+            # Composite score considers:
+            # - Validation average reward
+            # - Path efficiency in both training and validation
+            # - Initial distance to goal (to avoid lucky short-distance runs)
+            # - Obstacle density (reward more complex environments)
+            composite_score = (
+                val_avg_reward * 0.3 +  # Reward still matters
+                path_efficiency * 0.2 +  # Training episode efficiency
+                val_avg_efficiency * 0.2 +  # Validation efficiency
+                initial_distance * 0.15 +  # Prefer longer distances
+                obstacle_density * 0.15  # Prefer complex environments
+            )
+            
+            if composite_score > best_reward:
+                best_reward = composite_score
+                torch.save({
+                    'q_network_state_dict': agent.q_network.state_dict(),
+                    'target_network_state_dict': agent.target_network.state_dict(),
+                    'optimizer_state_dict': agent.optimizer.state_dict(),
+                    'epsilon': agent.epsilon,
+                    'episode': episode,
+                    'reward': total_reward,
+                    'steps': steps,
+                    'reached_goal': True,
+                    'path_efficiency': path_efficiency,
+                    'initial_distance': initial_distance,
+                    'obstacle_density': obstacle_density,
+                    'composite_score': composite_score
+                }, "best_model.pth")
+                print(f"\nNew best model saved!")
+                print(f"Reward: {total_reward:.2f}, Steps: {steps}")
+                print(f"Path Efficiency: {path_efficiency:.2f}")
+                print(f"Initial Distance: {initial_distance}")
+                print(f"Obstacle Density: {obstacle_density:.2f}")
+                print(f"Composite Score: {composite_score:.2f}")
+                print(f"Validation success rate: {val_successes}/3")
     
     # Early stopping if we consistently reach goal
     if len(episode_rewards) >= 10:
@@ -144,7 +189,7 @@ for episode in range(num_episodes):
             break
 
 print(f"\nTraining completed:")
-print(f"Best reward: {best_reward:.2f}")
+print(f"Best composite score: {best_reward:.2f}")
 print(f"Total successful runs: {len(successful_runs)}")
 if successful_runs:
     best_success = max(successful_runs, key=lambda x: x[0])

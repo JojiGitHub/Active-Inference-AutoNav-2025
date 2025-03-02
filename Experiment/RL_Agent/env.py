@@ -430,7 +430,7 @@ class CoppeliaSim:
         
         return cuboid_handle
     
-    def initialize_environment(self, num_obstacles=None):
+    def initialize_environment(self):
         """Create random obstacles in CoppeliaSim similar to redspots-1.ipynb
         
         Args:

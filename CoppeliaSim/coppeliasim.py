@@ -354,8 +354,102 @@ def clear_environment(obstacle_handles=None, goal_handle=None):
 
 clear_environment()
 
+class CoppeliaSim:
+    def __init__(self, random_seed=None, num_obstacles=None, grid_dimensions=[40, 40]):
+        """
+        Initialize CoppeliaSim environment
+        
+        Args:
+            random_seed (int, optional): Seed for random number generation. If None, a random seed will be used.
+            num_obstacles (int, optional): Default number of obstacles to create. If None, will be randomized based on seed.
+            grid_dimensions (list, optional): Dimensions of the grid. Defaults to [40, 40].
+        """
+        # Set random seed
+        self.random_seed = random_seed if random_seed is not None else int(time.time())
+        random.seed(self.random_seed)
+        np.random.seed(self.random_seed)
+        print(f"Using random seed: {self.random_seed}")
+        
+        # Add tracking for total distance and last position
+        self.total_distance = 0.0
+        self.last_position = None
 
+    def step(self, action):
+        """
+        Take an action in the environment. Compatible with Gym interface.
+        
+        Args:
+            action (int): Action to take (0=UP, 1=DOWN, 2=LEFT, 3=RIGHT, 4=STAY)
+            
+        Returns:
+            tuple: (new_state, reward, done, info)
+        """
+        # Store current position before moving
+        old_pos = self.agent_grid_position
+        old_world_pos = self.sim.getObjectPosition(self.bubbleRobHandle, -1)
+        
+        # Execute action in the simulation
+        self.move_agent(action)
+        
+        # Get new position from CoppeliaSim
+        new_world_pos = self.sim.getObjectPosition(self.bubbleRobHandle, -1)
+        
+        # Calculate distance traveled in this step
+        if self.last_position is not None:
+            distance = np.sqrt((new_world_pos[0] - self.last_position[0])**2 + 
+                             (new_world_pos[1] - self.last_position[1])**2)
+            self.total_distance += distance
+        
+        # Update last position
+        self.last_position = new_world_pos
+        
+        # Convert to grid position
+        new_grid_pos = self.move_to_grid(new_world_pos[0], new_world_pos[1])
+        if isinstance(new_grid_pos, tuple):
+            self.agent_grid_position = new_grid_pos
+        else:
+            # If conversion failed, don't update grid position
+            new_grid_pos = old_pos
+            
+        # Increment step counter
+        self.total_steps += 1
+        
+        # Calculate reward and check if episode is done
+        reward, done = self.calculate_reward(old_pos, new_grid_pos, action)
+        
+        # Get new state
+        new_state = self.get_state()
+        
+        # Additional info including distance metrics
+        info = {
+            'steps': self.total_steps,
+            'old_position': old_pos,
+            'new_position': new_grid_pos,
+            'goal_position': self.goal_position,
+            'manhattan_distance': abs(new_grid_pos[0] - self.goal_position[0]) + 
+                                 abs(new_grid_pos[1] - self.goal_position[1]),
+            'total_distance': self.total_distance,
+            'step_distance': distance if self.last_position is not None else 0.0
+        }
+        
+        return np.array(new_state, dtype=np.float32), reward, done, info
 
+    def reset(self):
+        """
+        Reset the environment to initial state. Compatible with Gym interface.
+        
+        Returns:
+            numpy.ndarray: Initial state observation
+        """
+        # Reset distance tracking
+        self.total_distance = 0.0
+        self.last_position = None
+        
+        # If environment not initialized yet, do that first
+        if not self.red_zone_positions or not self.goal_position:
+            self.initialize_environment(self.num_obstacles)
+        
+        # ...existing code...
 
 # Step 2: Get the object handle for the BubbleRob
 # bubbleRobHandle = sim.getObject('/bubbleRob')
