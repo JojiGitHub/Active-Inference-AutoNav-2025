@@ -1,19 +1,43 @@
 import torch
 import numpy as np
 from agent import ImprovedDQNAgent, PrioritizedReplayBuffer
-from env import GridWorldEnv  # Import your environment class
+from env import CoppeliaSim, COPPELIA_AVAILABLE
+import time
 
 # Hyperparameters
-state_dim = 21  # Updated from 17 to 21 to include agent and goal coordinates
+state_dim = 21  # 21 includes agent and goal coordinates
 action_dim = 5
 batch_size = 64
 lr = 0.001
 gamma = 0.9
 num_episodes = 1000
-max_timesteps = 12  # Matching env's timeout
+max_timesteps = 80  # Increased to match the environment's max_steps for the larger environment
 
-# Initialize environment and agent
-env = GridWorldEnv()
+# Initialize CoppeliaSim environment
+if not COPPELIA_AVAILABLE:
+    print("CoppeliaSim is not available. Cannot train without simulation.")
+    exit(1)
+
+print("\nInitializing CoppeliaSim environment for training...")
+# Create a random seed for reproducibility
+random_seed = int(time.time())  # Use time as seed for variety during training
+# Don't specify num_obstacles to allow it to be randomized based on seed
+# The environment will generate between 20-50 obstacles
+
+# Initialize CoppeliaSim with our hyperparameters
+env = CoppeliaSim(random_seed=random_seed)
+
+# Generate random environment in CoppeliaSim
+red_zone_positions, goal_position = env.initialize_environment()
+print(f"Generated random environment with {env.num_obstacles} obstacles using seed {random_seed}")
+print(f"Red zone positions: {red_zone_positions}")
+print(f"Goal position: {goal_position}")
+
+# Visualize the initial environment
+print("\nInitial CoppeliaSim Environment:")
+env.render()
+
+# Initialize agent and replay buffer
 agent = ImprovedDQNAgent(state_dim=state_dim, action_dim=action_dim, lr=lr)
 buffer = PrioritizedReplayBuffer(capacity=10000)
 
@@ -25,7 +49,7 @@ successful_runs = []  # Track episodes that reached the goal
 
 # Training loop
 for episode in range(num_episodes):
-    state = env.reset()
+    state = env.reset()  # Reset environment and get initial state
     done = False
     total_reward = 0
     steps = 0
@@ -44,7 +68,7 @@ for episode in range(num_episodes):
         steps += 1
         
         # Check if agent reached goal
-        if (env.agent_x, env.agent_y) == env.goal_position:
+        if env.agent_grid_position == env.goal_position:
             reached_goal = True
     
     episode_rewards.append(total_reward)
@@ -62,6 +86,10 @@ for episode in range(num_episodes):
     print(f"Total Reward: {total_reward:.2f}, Avg Reward: {recent_avg_reward:.2f}")
     print(f"Reached Goal: {reached_goal}")
     
+    # Visualize progress occasionally
+    if episode % 10 == 0:
+        env.render()
+    
     # Save only if we reach the goal and get better performance
     if reached_goal:
         # Quick validation with 3 episodes
@@ -77,12 +105,14 @@ for episode in range(num_episodes):
             while not val_done and val_step_count < max_timesteps:
                 val_action = agent.select_action(val_state)
                 val_next_state, val_rew, val_done, _ = env.step(val_action)
+                
                 val_reward += val_rew
                 val_state = val_next_state
                 val_step_count += 1
                 
-                if (env.agent_x, env.agent_y) == env.goal_position:
+                if env.agent_grid_position == env.goal_position:
                     val_reached_goal = True
+                    break
             
             val_rewards.append(val_reward)
             if val_reached_goal:
@@ -92,7 +122,7 @@ for episode in range(num_episodes):
         
         # Save if validation shows consistent goal-reaching
         if val_successes >= 2 and val_avg_reward > best_reward:  # Must reach goal in at least 2/3 validation runs
-            best_reward = total_reward
+            best_reward = val_avg_reward
             torch.save({
                 'q_network_state_dict': agent.q_network.state_dict(),
                 'target_network_state_dict': agent.target_network.state_dict(),
@@ -119,3 +149,6 @@ print(f"Total successful runs: {len(successful_runs)}")
 if successful_runs:
     best_success = max(successful_runs, key=lambda x: x[0])
     print(f"Best successful run: Reward={best_success[0]:.2f}, Steps={best_success[1]}, Episode={best_success[2]}")
+
+# Stop CoppeliaSim simulation
+env.close()
