@@ -31,13 +31,12 @@ if not COPPELIA_AVAILABLE:
 print("\nInitializing CoppeliaSim environment for training...")
 # Create a random seed for reproducibility
 random_seed = int(time.time())  # Use time as seed for variety during training
-# Don't specify num_obstacles to allow it to be randomized based on seed
 # The environment will generate between 20-50 obstacles
 
 # Initialize CoppeliaSim with our hyperparameters
 env = CoppeliaSim(random_seed=random_seed)
 
-# Generate random environment in CoppeliaSim
+# Generate random environment in CoppeliaSim - using environment's num_obstacles
 red_zone_positions, goal_position = env.initialize_environment()
 print(f"Generated random environment with {env.num_obstacles} obstacles using seed {random_seed}")
 print(f"Red zone positions: {red_zone_positions}")

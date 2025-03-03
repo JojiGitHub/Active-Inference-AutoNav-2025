@@ -431,16 +431,12 @@ class CoppeliaSim:
         return cuboid_handle
     
     def initialize_environment(self):
-        """Create random obstacles in CoppeliaSim similar to redspots-1.ipynb
+        """Create random obstacles in CoppeliaSim
         
-        Args:
-            num_obstacles: Number of obstacles to create (defaults to self.num_obstacles)
+        Returns:
+            tuple: (red_zone_positions, goal_position)
         """
-        # Use the class's default num_obstacles if none is specified
-        if num_obstacles is None:
-            num_obstacles = self.num_obstacles
-            
-        print(f"Initializing environment with {num_obstacles} obstacles...")
+        print(f"Initializing environment with {self.num_obstacles} obstacles...")
         
         # Re-seed random number generator for consistent obstacle placement based on seed
         random.seed(self.random_seed)
@@ -449,7 +445,7 @@ class CoppeliaSim:
         # Clear previous obstacles if any
         try:
             # Try to remove any existing obstacles
-            for i in range(max(50, num_obstacles)):  # Ensure we clean up enough obstacles (up to 50)
+            for i in range(max(50, self.num_obstacles)):  # Ensure we clean up enough obstacles (up to 50)
                 try:
                     obstacle_handle = self.sim.getObject(f'/Obstacle{i}')
                     self.sim.removeObject(obstacle_handle)
@@ -471,7 +467,7 @@ class CoppeliaSim:
         obstacle_dimensions = [0.3, 0.3, 0.8]  # Same dimensions for all obstacles
         
         # Create random obstacles as specified by num_obstacles
-        for i in range(num_obstacles):
+        for i in range(self.num_obstacles):
             # Try to find a valid position (up to 100 attempts)
             valid_position = False
             attempts = 0
@@ -509,7 +505,7 @@ class CoppeliaSim:
                 print(f"Could not find valid position for Obstacle{i} after {attempts} attempts")
                 
         # Report obstacle creation statistics
-        print(f"Successfully created {len(self.redspots_coppelia)} obstacles out of {num_obstacles} requested")
+        print(f"Successfully created {len(self.redspots_coppelia)} obstacles out of {self.num_obstacles} requested")
         
         # Create a random goal position
         flat_object_dimensions = [0.3, 0.3, 0.01]
@@ -551,32 +547,6 @@ class CoppeliaSim:
             goal_x, goal_y = 2.0, 2.0
             self.goal_coppelia_position = [goal_x, goal_y]
             self.goal_position = self.move_to_grid(goal_x, goal_y)
-        
-        # Find valid initial position for bubbleRob
-        valid_position = False
-        attempts = 0
-        bubbleRob_x, bubbleRob_y = 0, 0
-        
-        while not valid_position and attempts < 100:
-            # Generate random position for bubbleRob
-            bubbleRob_x = round(random.uniform(-2.0, 2.0), 2)  # Smaller range to keep away from walls
-            bubbleRob_y = round(random.uniform(-2.0, 2.0), 2)
-            
-            # Check if position is valid
-            valid_position = self.is_bubbleRob_position_valid(bubbleRob_x, bubbleRob_y)
-            attempts += 1
-        
-        if valid_position:
-            # Set bubbleRob's initial position
-            self.sim.setObjectPosition(self.bubbleRobHandle, -1, [bubbleRob_x, bubbleRob_y, 0.12])
-            print(f"Placed bubbleRob at position [{bubbleRob_x}, {bubbleRob_y}, 0.12]")
-        else:
-            print(f"Could not find valid position for bubbleRob after {attempts} attempts")
-            # Use a fallback position for bubbleRob (0,0)
-            self.sim.setObjectPosition(self.bubbleRobHandle, -1, [0, 0, 0.12])
-        
-        # Create a visualization to show the mapping
-        self.visualize_environments_mapping()
         
         return self.red_zone_positions, self.goal_position
     
