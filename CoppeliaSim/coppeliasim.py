@@ -21,36 +21,37 @@ def move_to_grid(x, y):
     elif y > 5 or y < 0:
         return "Invalid y coordinate!"
     
-    # Convert x, y to grid indices by dividing by 0.05 (since each grid cell is 0.05 wide)
+    # Convert x, y to grid indices by dividing by 0.125 (40x40 grid)
     x_grid = round(x / 0.125)
     y_grid = round(y / 0.125)
     
-    # Ensure that the coordinates are within valid grid range (0 to 200)
-    if x_grid > 40 or x_grid < 0:
+    # Ensure that the coordinates are within valid grid range (0 to 39)
+    if x_grid > 39 or x_grid < 0:
         return "Invalid x grid point!"
-    if y_grid > 40 or y_grid < 0:
+    if y_grid > 39 or y_grid < 0:
         return "Invalid y grid point!"
     
     # Return the grid indices
     return (x_grid, y_grid)
-
     
 def grid_to_coordinates(x_grid, y_grid):
-    '''Converts a valid 200x200 grid point back into coppelia (x,y,z) coordinates in the range (x,y) = (0,0)-(5,5), z remains constant'''
-    # Ensure the grid points are within valid range (0 to 200)
-    if x_grid > 40 or x_grid < 0:
+    '''Converts a valid 40x40 grid point back into coppelia (x,y,z) coordinates'''
+    # Ensure the grid points are within valid range (0 to 39)
+    if x_grid > 39 or x_grid < 0:
         return "Invalid x grid point!"
-    if y_grid > 40 or y_grid < 0:
+    if y_grid > 39 or y_grid < 0:
         return "Invalid y grid point!"
     
-    # Reverse the grid index conversion by multiplying by 0.05
-    x = x_grid * 0.125
+    # Convert grid indices to world coordinates (multiply by 0.125)
+    x = x_grid * 0.125 
     y = y_grid * 0.125
     
-    x = x-2.5
-    y = y-2.5
+    # Translate back to original coordinate system
+    x = x - 2.5
+    y = y - 2.5
+    
     # Return the original (x, y, z) coordinates
-    return (x, y, 0.05)   
+    return (x, y, 0.05)
 
 def get_object_position(object_name):
     # Step 2: Get the object handle by name
