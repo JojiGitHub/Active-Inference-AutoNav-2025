@@ -2,8 +2,12 @@ import numpy as np
 import pandas as pd
 import random
 from datetime import datetime
-from ActInfAgent.agent import create_redspot_agent
-from ActInfAgent.env import initialize_environment, CoppeliaEnv, move_to_grid, get_object_position
+try:
+    from ActInfAgent.agent import create_redspot_agent
+    from ActInfAgent.env import initialize_environment, CoppeliaEnv, move_to_grid, get_object_position
+except:
+    from agent import create_redspot_agent
+    from env import initialize_environment, CoppeliaEnv, move_to_grid, get_object_position
 
 def initialize_experiment(random_seed=42):
     """
