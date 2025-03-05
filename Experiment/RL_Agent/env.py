@@ -11,9 +11,28 @@ import os
 # Add CoppeliaSim directory to path to import the module
 sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'CoppeliaSim'))
 try:
-    from CoppeliaSim.coppeliasim import sim
+    # Import directly from the coppeliasim_zmqremoteapi_client like in ActInfAgent
+    from coppeliasim_zmqremoteapi_client import RemoteAPIClient
+    # Create a client and get the sim object
+    client = RemoteAPIClient()
+    sim = client.getObject('sim')
+    print("Successfully connected to CoppeliaSim Remote API")
 except ImportError:
-    print("Warning: CoppeliaSim module not found. Simulator functionality may be limited.")
+    print("Failed to import coppeliasim_zmqremoteapi_client. Make sure the CoppeliaSim Remote API client is properly installed.")
+    print("You may need to install it with: pip install coppeliasim-zmqremoteapi-client")
+    try:
+        from CoppeliaSim.coppeliasim import sim
+        print("Warning: Using fallback CoppeliaSim module.")
+    except ImportError:
+        print("Warning: CoppeliaSim module not found. Simulator functionality may be limited.")
+        # Create a dummy sim object for testing without CoppeliaSim
+        class DummySim:
+            def __getattr__(self, name):
+                def dummy_method(*args, **kwargs):
+                    print(f"Dummy sim.{name} called with args: {args}, kwargs: {kwargs}")
+                    return -1
+                return dummy_method
+        sim = DummySim()
 
 # Define constants for actions
 UP = 0
@@ -56,6 +75,7 @@ class GridWorldEnv:
         self.total_steps = 0
         self.vision_distance = 2  # How far the agent can see (radius)
         self.use_coppeliasim = use_coppeliasim
+        self.simulation_mode = not use_coppeliasim
         
         # Setup Gym spaces for RL compatibility
         self.action_space = spaces.Discrete(5)  # 5 actions: UP, DOWN, LEFT, RIGHT, STAY
@@ -68,9 +88,33 @@ class GridWorldEnv:
             dtype=np.float32
         )
         
+        # Stop any running simulation first
+        if self.use_coppeliasim:
+            try:
+                # First try to stop the simulation if it's running
+                sim_state = sim.getSimulationState()
+                if sim_state != sim.simulation_stopped:
+                    print("Stopping existing simulation...")
+                    sim.stopSimulation()
+                    time.sleep(1.0)  # Wait for simulation to fully stop
+                
+                # Clear any existing environment
+                print("Clearing existing environment...")
+                self.clear_environment()
+            except Exception as e:
+                print(f"Warning during environment cleanup: {e}")
+        
         # Initialize environment (CoppeliaSim or Grid-only)
         try:
             if self.use_coppeliasim:
+                # Start simulation if using CoppeliaSim
+                try:
+                    print("Starting new CoppeliaSim simulation...")
+                    sim.startSimulation()
+                except Exception as e:
+                    print(f"Warning: Could not start simulation: {e}")
+                    self.simulation_mode = True
+                    
                 self.initialize_coppelia_environment(random_seed)
             else:
                 self.initialize_grid_environment(random_seed)
@@ -78,6 +122,7 @@ class GridWorldEnv:
             print(f"Error during initialization: {e}")
             print("Falling back to grid-only mode")
             self.use_coppeliasim = False
+            self.simulation_mode = True
             self.initialize_grid_environment(random_seed)
     
     def initialize_grid_environment(self, random_seed):
@@ -117,13 +162,21 @@ class GridWorldEnv:
         # Get environment setup from CoppeliaSim
         obstacle_positions, goal_position, obstacle_handles, goal_handle, bubbleRob_position, redspots = self.initialize_environment(random_seed)
         
-        # Set agent and environment properties
+        # Store object handles for cleanup
         self.obstacle_handles = obstacle_handles
         self.goal_handle = goal_handle
         
         # Convert positions to grid coordinates
         agent_pos = self.move_to_grid(bubbleRob_position[0], bubbleRob_position[1])
+        if not isinstance(agent_pos, tuple):
+            print(f"Warning: Invalid agent position {agent_pos}. Using default position.")
+            agent_pos = (20, 20)  # Default position
+            
         self.goal = self.move_to_grid(goal_position[0], goal_position[1])
+        if not isinstance(self.goal, tuple):
+            print(f"Warning: Invalid goal position {self.goal}. Using default position.")
+            self.goal = (35, 35)  # Default position
+            
         self.redspots = redspots
         
         # Initialize agent state
@@ -132,8 +185,16 @@ class GridWorldEnv:
         self.current_location = agent_pos
         
         # Initialize path following components
-        self.initialize_robot()
-        self.initialize_path_following()
+        try:
+            self.initialize_robot()
+            self.initialize_path_following()
+        except Exception as e:
+            print(f"Error initializing robot: {e}")
+            self.simulation_mode = True
+        
+        print(f"Agent starting position: {agent_pos}")
+        print(f"Goal location: {self.goal}")
+        print(f"Number of red spots: {len(self.redspots)}")
     
     def initialize_robot(self):
         """Initialize robot handle and properties"""
@@ -157,9 +218,13 @@ class GridWorldEnv:
     
     def get_initial_object_properties(self):
         """Get initial robot properties"""
-        initial_pos = sim.getObjectPosition(self.bubbleRobHandle, -1)
-        initial_orient = sim.getObjectQuaternion(self.bubbleRobHandle, -1)
-        return initial_pos[2], initial_orient
+        try:
+            initial_pos = sim.getObjectPosition(self.bubbleRobHandle, -1)
+            initial_orient = sim.getObjectQuaternion(self.bubbleRobHandle, -1)
+            return initial_pos[2], initial_orient
+        except Exception as e:
+            print(f"Warning: Could not get object properties: {e}")
+            return 0.12, [0, 0, 0, 1]  # Default values
     
     def move_to_grid(self, x, y):
         """Convert CoppeliaSim coordinates to grid coordinates"""
@@ -244,34 +309,61 @@ class GridWorldEnv:
     
     def follow_path(self):
         """Follow the Bezier path"""
+        # Skip if in simulation mode
+        if self.simulation_mode:
+            return
+        
+        # Reset position along path for new path
         self.posAlongPath = 0
+        
+        # Calculate total length for current control points
         total_length = self.calculate_total_length(self.ctrlPts_flattened)
         self.previousSimulationTime = sim.getSimulationTime()
         
+        # Set a maximum time limit for path following to avoid getting stuck
+        max_time = 2.0  # seconds
+        start_time = time.time()
+        
         while self.posAlongPath < total_length:
+            # Check if we've exceeded the time limit
+            if time.time() - start_time > max_time:
+                print("Stopping path follow due to time limit")
+                break
+                
             t = sim.getSimulationTime()
             deltaT = t - self.previousSimulationTime
             
             if deltaT <= 0.0:
                 self.previousSimulationTime = t
+                sim.step()  # Make sure simulation progresses
+                time.sleep(0.01)
                 continue
             
             self.posAlongPath += self.velocity * deltaT
             
             if self.posAlongPath >= total_length - 0.001:
                 self.posAlongPath = total_length
+                print("Reached the end of the path!")
                 break
             
+            # Calculate normalized parameter
             t_norm = np.clip(self.posAlongPath / total_length, 0, 1)
+            # Get current position and tangent
             current_pos, tangent = self.get_point_and_tangent(t_norm, self.ctrlPts_flattened)
-            current_pos[2] = self.initial_z
             
+            # Ensure Z coordinate
+            if hasattr(self, 'initial_z'):
+                current_pos[2] = self.initial_z
+            else:
+                current_pos[2] = 0.12  # Default height
+            
+            # Update position and orientation
             sim.setObjectPosition(self.bubbleRobHandle, -1, current_pos.tolist())
             self.update_orientation(current_pos, tangent)
             
             self.previousSimulationTime = t
             sim.step()
-            time.sleep(0.05)
+            time.sleep(0.02)  # Reduce this value for faster movement
     
     def get_observation(self):
         """
@@ -327,28 +419,95 @@ class GridWorldEnv:
             old_position = self.current_location
             old_manhattan = abs(old_position[0] - self.goal[0]) + abs(old_position[1] - self.goal[1])
             
-            # Get action name
+            # Get action name for logging
             action_name = ACTION_NAMES.get(action, "STAY")
+            print(f"Taking action: {action_name}")
+            
+            # Store previous position before movement
+            prev_x, prev_y = self.x, self.y
+            offset_x = 0
+            offset_y = 0
             
             # Update position based on action
             if action == UP:
                 self.y = max(0, self.y - 1)
+                # For UP/DOWN movement, add curve offset
+                offset_x = offset_x + 0.02  # Curve to the right
             elif action == DOWN:
                 self.y = min(self.grid_dimensions[1] - 1, self.y + 1)
+                offset_x = offset_x - 0.02  # Curve to the left
             elif action == LEFT:
                 self.x = max(0, self.x - 1)
+                offset_y = offset_y + 0.02  # Curve upward
             elif action == RIGHT:
                 self.x = min(self.grid_dimensions[0] - 1, self.x + 1)
+                offset_y = offset_y - 0.02  # Curve downward
             
-            # Update current location and calculate distances
+            # Update current location
             self.current_location = (self.x, self.y)
             new_position = self.current_location
             new_manhattan = abs(new_position[0] - self.goal[0]) + abs(new_position[1] - self.goal[1])
             
-            # Update CoppeliaSim if enabled
-            if self.use_coppeliasim:
-                # ... existing CoppeliaSim code ...
-                pass
+            print(f"New position: {self.current_location}")
+            
+            # Update CoppeliaSim if enabled and not in simulation mode
+            if self.use_coppeliasim and not self.simulation_mode:
+                try:
+                    # Check if simulation is running, if not start it
+                    sim_state = sim.getSimulationState()
+                    if sim_state == sim.simulation_stopped:
+                        sim.startSimulation()
+                        print("Starting simulation")
+                        time.sleep(0.2)  # Give it time to start properly
+                    
+                    # Add new control point with offset for curved path
+                    new_coords = self.grid_to_coordinates(self.x, self.y)
+                    if isinstance(new_coords, tuple):  # Make sure we got valid coordinates
+                        # Add slight offset for curved paths
+                        new_coords = (new_coords[0] + offset_x, new_coords[1] + offset_y, new_coords[2])
+                        
+                        # Add the new point to our control points
+                        self.ctrlPts.append([
+                            new_coords[0], 
+                            new_coords[1],
+                            0.05, 0.0, 0.0, 0.0, 1.0
+                        ])
+                        
+                        # Update flattened control points
+                        self.ctrlPts_flattened = [coord for point in self.ctrlPts for coord in point]
+                        
+                        # Create temporary path for visualization (will be removed after following)
+                        try:
+                            pathHandle = sim.createPath(
+                                self.ctrlPts_flattened,
+                                0,  # Options: open path
+                                100,  # Subdivision for smoothness
+                                0.5,  # Smoothness factor
+                                0,  # Orientation mode
+                                [0.0, 0.0, 1.0]  # Up vector
+                            )
+                            
+                            # Follow the path
+                            print("Following path...")
+                            self.follow_path()
+                            
+                            # Remove the path object
+                            try:
+                                sim.removeObject(pathHandle)
+                            except Exception as path_e:
+                                print(f"Warning: Could not remove path: {path_e}")
+                        except Exception as path_create_e:
+                            print(f"Warning: Could not create path: {path_create_e}")
+                        
+                        # Keep only the two most recent control points to avoid complex paths
+                        if len(self.ctrlPts) > 2:
+                            self.ctrlPts = [self.ctrlPts[-2], self.ctrlPts[-1]]
+                            self.ctrlPts_flattened = [coord for point in self.ctrlPts for coord in point]
+                    else:
+                        print(f"Warning: Invalid coordinates from grid_to_coordinates: {new_coords}")
+                except Exception as e:
+                    print(f"Warning: Simulation step failed: {e}")
+                    self.simulation_mode = True
             
             # ULTRA SIMPLE REWARD FUNCTION
             reward = 0.0
@@ -358,11 +517,13 @@ class GridWorldEnv:
             if new_position == self.goal:
                 reward = 1.0  # Binary reward
                 done = True
+                print("Goal reached!")
             
             # Obstacle hit - episode ends
             elif new_position in self.redspots:
                 reward = -1.0  # Fixed negative reward
                 done = True
+                print("Hit obstacle!")
             
             # Simple direction-based reward
             else:
@@ -377,6 +538,7 @@ class GridWorldEnv:
             
             # Time limit reached
             if self.total_steps >= self.max_steps:
+                print("Max steps reached")
                 done = True
             
             # Get observation
@@ -410,19 +572,64 @@ class GridWorldEnv:
             self.x, self.y = self.init_loc
             self.current_location = (self.x, self.y)
             self.total_steps = 0
+            print(f"Resetting agent to position {self.current_location}")
             
             # Reset CoppeliaSim position if enabled
-            if self.use_coppeliasim:
+            if self.use_coppeliasim and not self.simulation_mode:
                 try:
-                    # Reset BubbleRob position
-                    coords = self.grid_to_coordinates(self.x, self.y)
-                    if coords:
-                        sim.setObjectPosition(self.bubbleRobHandle, -1, [coords[0], coords[1], 0.12])
-                        
+                    # Check if we need to restart the simulation
+                    restart_needed = False
+                    try:
+                        # First check if simulation is running
+                        sim_state = sim.getSimulationState()
+                        if sim_state != sim.simulation_stopped:
+                            # Only restart if specified objects aren't available
+                            try:
+                                # Try to get bubbleRob handle - if this fails, we need to restart
+                                self.bubbleRobHandle = sim.getObject('/bubbleRob')
+                                if self.bubbleRobHandle == -1:
+                                    restart_needed = True
+                            except Exception:
+                                restart_needed = True
+                    except Exception:
+                        restart_needed = True
+                    
+                    if restart_needed:
+                        print("Restarting simulation...")
+                        try:
+                            # Stop the simulation if it's running
+                            sim_state = sim.getSimulationState()
+                            if sim_state != sim.simulation_stopped:
+                                sim.stopSimulation()
+                                time.sleep(0.5)  # Give it time to stop
+                            
+                            # Clear and re-initialize the environment
+                            self.clear_environment()
+                            
+                            # Initialize the environment with the same seed
+                            self.initialize_coppelia_environment(random_seed=42)  # Using a default seed here
+                            
+                            # Start a new simulation
+                            sim.startSimulation()
+                            time.sleep(0.5)  # Give it time to start
+                        except Exception as e:
+                            print(f"Warning: Could not restart simulation: {e}")
+                            self.simulation_mode = True
+                    else:
+                        # If no restart needed, just reset bubbleRob position
+                        # Reset BubbleRob position
+                        coords = self.grid_to_coordinates(self.x, self.y)
+                        if coords:
+                            sim.setObjectPosition(self.bubbleRobHandle, -1, [coords[0], coords[1], 0.12])
+                            if hasattr(self, 'initial_orientation'):
+                                sim.setObjectQuaternion(self.bubbleRobHandle, -1, self.initial_orientation)
+                    
                     # Reset path following variables
                     self.initialize_path_following()
+                    
                 except Exception as e:
                     print(f"Error resetting CoppeliaSim: {e}")
+                    self.simulation_mode = True
             
             # Ensure goal and agent positions are valid
             if not hasattr(self, 'goal') or not isinstance(self.goal, tuple) or len(self.goal) != 2:
@@ -471,12 +678,69 @@ class GridWorldEnv:
     
     def close(self):
         """Close environment and clean up resources"""
-        if self.use_coppeliasim:
+        if self.use_coppeliasim and not self.simulation_mode:
             try:
+                # First clear the environment
+                if hasattr(self, 'obstacle_handles') and hasattr(self, 'goal_handle'):
+                    self.clear_environment(self.obstacle_handles, self.goal_handle)
+                    
                 # Stop simulation
                 sim.stopSimulation()
+                print("CoppeliaSim simulation stopped.")
             except Exception as e:
                 print(f"Error closing CoppeliaSim: {e}")
+                
+    def clear_environment(self, obstacle_handles=None, goal_handle=None):
+        """Clear environment objects"""
+        success = True
+        
+        # Remove all obstacles if handles are provided
+        if obstacle_handles:
+            for i, handle in enumerate(obstacle_handles):
+                try:
+                    if sim.isHandle(handle):  # Check if handle is valid
+                        sim.removeObject(handle)
+                        print(f"Removed Obstacle{i}")
+                except Exception as e:
+                    print(f"Error removing Obstacle{i}: {e}")
+                    success = False
+        
+        # Remove goal location if handle is provided
+        if goal_handle:
+            try:
+                if sim.isHandle(goal_handle):  # Check if handle is valid
+                    sim.removeObject(goal_handle)
+                    print("Removed Goal_Loc")
+            except Exception as e:
+                print(f"Error removing Goal_Loc: {e}")
+                success = False
+        
+        # Alternative method: try to remove all objects by name
+        try:
+            # Try to remove obstacles by name
+            for i in range(50):  # Try a reasonable number of obstacles
+                try:
+                    object_handle = sim.getObject(f'/Obstacle{i}')
+                    if object_handle != -1:
+                        sim.removeObject(object_handle)
+                        print(f"Removed Obstacle{i} by name")
+                except Exception:
+                    # Ignore errors here as we're just trying to clean up
+                    pass
+            
+            # Try to remove goal by name
+            try:
+                goal_object = sim.getObject('/Goal_Loc')
+                if goal_object != -1:
+                    sim.removeObject(goal_object)
+                    print("Removed Goal_Loc by name")
+            except Exception:
+                # Ignore errors here as we're just trying to clean up
+                pass
+        except Exception as e:
+            print(f"Error during environment cleanup: {e}")
+        
+        return success
     
     # CoppeliaSim environment setup methods
     def initialize_environment(self, seed):
@@ -484,6 +748,24 @@ class GridWorldEnv:
         random.seed(seed)
         num_obstacles = random.randint(20, 50)
         print(f"Initializing environment with seed {seed} and {num_obstacles} obstacles")
+        
+        # Make sure any existing simulation is stopped and environment is cleared
+        try:
+            sim_state = sim.getSimulationState()
+            if sim_state != sim.simulation_stopped:
+                sim.stopSimulation()
+                time.sleep(0.5)  # Wait for simulation to stop
+            self.clear_environment()
+        except Exception as e:
+            print(f"Warning during environment cleanup: {e}")
+        
+        # Start the simulation explicitly
+        try:
+            sim.startSimulation()
+            print("Simulation started successfully")
+        except Exception as e:
+            print(f"Warning: Could not start simulation: {e}")
+            self.simulation_mode = True
         
         obstacle_positions = []
         obstacle_handles = []
@@ -505,15 +787,20 @@ class GridWorldEnv:
                 
             if valid_position:
                 obstacle_positions.append((x, y))
-                obstacle = self.create_cuboid(
-                    dimensions=obstacle_dimensions,
-                    position=[x, y, 0.4],
-                    color=[1, 0, 0],
-                    mass=1,
-                    respondable=True,
-                    name=f"Obstacle{i}"
-                )
-                obstacle_handles.append(obstacle)
+                try:
+                    obstacle = self.create_cuboid(
+                        dimensions=obstacle_dimensions,
+                        position=[x, y, 0.4],
+                        color=[1, 0, 0],
+                        mass=1,
+                        respondable=True,
+                        name=f"Obstacle{i}"
+                    )
+                    obstacle_handles.append(obstacle)
+                    print(f"Created Obstacle{i} at position [{x}, {y}, 0.4]")
+                except Exception as e:
+                    print(f"Error creating obstacle: {e}")
+                    obstacle_handles.append(-1)  # Use a dummy handle
                 
                 # Get grid points for redspots
                 grid_points = self.get_all_grid_points_in_obstacle((x, y), obstacle_dimensions)
@@ -538,15 +825,27 @@ class GridWorldEnv:
             attempts += 1
             
         if valid_position:
-            goal_handle = self.create_cuboid(
-                dimensions=goal_dimensions,
-                position=[x, y, 0.005],
-                color=[0, 1, 0],
-                mass=0.1,
-                respondable=True,
-                name="Goal_Loc"
-            )
+            try:
+                goal_handle = self.create_cuboid(
+                    dimensions=goal_dimensions,
+                    position=[x, y, 0.005],
+                    color=[0, 1, 0],
+                    mass=0.1,
+                    respondable=True,
+                    name="Goal_Loc"
+                )
+                goal_position = (x, y, 0.005)
+                print(f"Created Goal_Loc at position [{x}, {y}, 0.005]")
+            except Exception as e:
+                print(f"Error creating goal object: {e}")
+                goal_handle = -1
+                goal_position = (x, y, 0.005)  # Still use the position
+        else:
+            print(f"Could not find valid position for Goal_Loc after {attempts} attempts")
+            # Use default position
+            x, y = 2.0, 2.0
             goal_position = (x, y, 0.005)
+            goal_handle = -1
         
         # Place bubbleRob
         bubbleRob_dimensions = [0.2, 0.2, 0.2]
@@ -564,10 +863,21 @@ class GridWorldEnv:
             attempts += 1
         
         if valid_position:
-            bubbleRob_handle = sim.getObject('/bubbleRob')
-            if bubbleRob_handle != -1:
-                sim.setObjectPosition(bubbleRob_handle, -1, [x, y, 0.12])
-                bubbleRob_position = (x, y, 0.12)
+            try:
+                bubbleRob_handle = sim.getObject('/bubbleRob')
+                if bubbleRob_handle != -1:
+                    sim.setObjectPosition(bubbleRob_handle, -1, [x, y, 0.12])
+                    bubbleRob_position = (x, y, 0.12)
+                    print(f"Placed bubbleRob at position [{x}, {y}, 0.12]")
+                else:
+                    print("bubbleRob object not found in the scene!")
+                    bubbleRob_position = (0, 0, 0.12)  # Default position
+            except Exception as e:
+                print(f"Error placing bubbleRob: {e}")
+                bubbleRob_position = (0, 0, 0.12)  # Default position
+        else:
+            print(f"Could not find valid position for bubbleRob after {attempts} attempts")
+            bubbleRob_position = (0, 0, 0.12)  # Default position
         
         return obstacle_positions, goal_position, obstacle_handles, goal_handle, bubbleRob_position, redspots
     

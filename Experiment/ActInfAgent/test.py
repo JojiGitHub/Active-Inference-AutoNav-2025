@@ -257,6 +257,6 @@ def test_active_inference(random_seed=42, num_steps=100, policy_len=3):
 
 if __name__ == "__main__":
     # Run test with a specific random seed
-    df = run_experiment(random_seed=42, max_steps=100, save_data=True)
+    df = run_experiment(random_seed=41, max_steps=100, save_data=True)
     print("\nExperiment complete. Summary statistics:")
     print(df.describe())
