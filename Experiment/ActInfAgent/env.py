@@ -139,7 +139,7 @@ def create_bounding_locations(position, dimensions):
 
 def get_all_grid_points_in_obstacle(position, dimensions):
     """
-    Get all grid points with 0.125 interval within an obstacle.
+    Get ALL grid points within and on the boundaries of an obstacle.
     
     Parameters:
     -----------
@@ -151,38 +151,32 @@ def get_all_grid_points_in_obstacle(position, dimensions):
     Returns:
     --------
     list
-        All grid points with 0.125 interval that are contained within the obstacle
+        All points to be converted to grid coordinates within and on the obstacle
     """
     (x, y) = position
     (a, b, c) = dimensions
     
-    # Calculate the boundaries
+    # Calculate the exact boundaries of the obstacle
     x_min = x - a/2
     x_max = x + a/2
     y_min = y - b/2
     y_max = y + b/2
     
-    # Adding a small epsilon to ensure we include boundary points
-    epsilon = 0.0001
+    # Precision for floating-point comparisons
+    epsilon = 1e-6
     
-    # Find the closest grid points that contain the obstacle
-    x_start = math.ceil(x_min / 0.125) * 0.125
-    x_end = math.floor(x_max / 0.125) * 0.125
-    y_start = math.ceil(y_min / 0.125) * 0.125
-    y_end = math.floor(y_max / 0.125) * 0.125
+    all_points = []
     
-    # Generate all grid points within the obstacle
-    all_grid_points = []
-    current_x = x_start
-    while current_x <= x_end + epsilon:
-        current_y = y_start
-        while current_y <= y_end + epsilon:
-            all_grid_points.append((round(current_x, 3), round(current_y, 3)))
+    # Comprehensive point generation
+    current_x = x_min
+    while current_x <= x_max + epsilon:
+        current_y = y_min
+        while current_y <= y_max + epsilon:
+            all_points.append((current_x, current_y))
             current_y += 0.125
         current_x += 0.125
     
-    return all_grid_points
-
+    return all_points
         
 def check_bounds(loc):
     '''Checks if a location is within the bounds of the grid'''
@@ -275,7 +269,7 @@ def initialize_environment(seed):
     print(f"Initializing environment with seed {seed} and {num_obstacles} obstacles")
     obstacle_positions = []
     obstacle_handles = []
-    obstacle_dimensions = [0.3, 0.3, 0.8]  # Same dimensions for all obstacles
+    obstacle_dimensions = [0.25, 0.25, 0.8]  # Same dimensions for all obstacles
     
     # Function to check if a new position conflicts with existing obstacles
     def is_position_valid(new_x, new_y, object_dimensions):
@@ -514,7 +508,7 @@ def initialize_environment(seed):
     for pos in obstacle_positions:
         flat_positions.extend(pos)
     
-    # Process obstacles to generate redspots
+    print("Generating redspots...")
     for obstacle_num in range(len(obstacle_positions)):
         obstacle_name = f'Obstacle{obstacle_num}'
         obstacle_position = obstacle_positions[obstacle_num]
@@ -532,29 +526,21 @@ def initialize_environment(seed):
                     print(f"Error getting position for {obstacle_name}, using stored position: {e}")
                     obstacle_position_list = [obstacle_position[0], obstacle_position[1], 0.4]
             
-            # Using the same dimensions for all obstacles as defined in initialize_environment
-            obstacle_dimensions = (0.3, 0.3, 0.8)  # Match the dimensions from initialize_environment
-            
             print(f"Processing {obstacle_name}...")
             
-            # Get all grid points within this obstacle at 0.125 intervals
-            grid_points_in_obstacle = get_all_grid_points_in_obstacle(
+            # Get all points within this obstacle
+            points_in_obstacle = get_all_grid_points_in_obstacle(
                 (obstacle_position_list[0], obstacle_position_list[1]), 
                 obstacle_dimensions
             )
             
-            # Convert each Coppelia coordinate to grid coordinates
-            for point in grid_points_in_obstacle:
-                x, y = point
-                grid_position = move_to_grid(x, y)
+            # Convert points to grid coordinates and add to redspots
+            for point in points_in_obstacle:
+                grid_position = move_to_grid(point[0], point[1])
                 
                 # Only append valid grid positions
-                if isinstance(grid_position, tuple):
-                    # Check if this grid position is already in redspots (avoid duplicates)
-                    if grid_position not in redspots:
-                        redspots.append(grid_position)
-                else:
-                    print(f"Warning: Invalid grid position for {obstacle_name} at {point}: {grid_position}")
+                if isinstance(grid_position, tuple) and grid_position not in redspots:
+                    redspots.append(grid_position)
                 
         except Exception as e:
             print(f"Error processing {obstacle_name}: {e}")
@@ -972,6 +958,4 @@ class CoppeliaEnv():
                 self.simulation_mode = True
 
         return self.loc_obs, self.green_obs, self.white_obs, self.red_obs, self.agent_reward
-
-
 
