@@ -55,6 +55,7 @@ def evaluate_episode(agent, env, max_steps=100, render=False, step_delay=0.0):
         
         # Add delay before step to slow down the simulation
         if step_delay > 0:
+            print(f"Waiting {step_delay} seconds before next step...")
             time.sleep(step_delay)
             
         next_state, reward, done, info = env.step(action)
@@ -297,6 +298,13 @@ def main(use_coppeliasim=False, random_seed=42, render_visualization=False, sim_
     print("\nVisualizing episodes with model...")
     env = GridWorldEnv(random_seed=random_seed, use_coppeliasim=use_coppeliasim)
     
+    # If using CoppeliaSim, also modify the path following delay in the environment
+    if use_coppeliasim and hasattr(env, 'follow_path'):
+        # Set the path following delay to slow down the robot movement
+        # This is modifying the environment's internal time.sleep value
+        print("Setting environment path following delay to 0.1 seconds")
+        env.path_follow_delay = 0.1  # Set longer delay for path following
+    
     try:
         for i in range(3):
             print(f"\nVisualization Episode {i+1}")
@@ -320,7 +328,7 @@ if __name__ == "__main__":
     USE_COPPELIASIM = True  # Set this to False to disable CoppeliaSim
     RANDOM_SEED = 42        # Change this to use a different random seed
     RENDER = False          # Set this to True to render the grid visualization 
-    SIM_SPEED = 0.5         # Delay in seconds between steps (0.5 = half second delay)
+    SIM_SPEED = 0.001         # Delay in seconds between steps (2.0 = 2 second delay, increased from 0.5)
     
     # Run the main function with the specified parameters
     main(

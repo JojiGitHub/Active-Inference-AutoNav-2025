@@ -77,6 +77,10 @@ class GridWorldEnv:
         self.use_coppeliasim = use_coppeliasim
         self.simulation_mode = not use_coppeliasim
         
+        # Path following parameters
+        self.velocity = 0.08  # Default velocity for path following
+        self.path_follow_delay = 0.05  # Default delay between steps in path following
+        
         # Setup Gym spaces for RL compatibility
         self.action_space = spaces.Discrete(5)  # 5 actions: UP, DOWN, LEFT, RIGHT, STAY
         
@@ -321,8 +325,10 @@ class GridWorldEnv:
         self.previousSimulationTime = sim.getSimulationTime()
         
         # Set a maximum time limit for path following to avoid getting stuck
-        max_time = 2.0  # seconds
+        max_time = 3.0  # seconds (increased from the default 2.0)
         start_time = time.time()
+        
+        print(f"Following path... (delay={self.path_follow_delay}s)")
         
         while self.posAlongPath < total_length:
             # Check if we've exceeded the time limit
@@ -363,7 +369,8 @@ class GridWorldEnv:
             
             self.previousSimulationTime = t
             sim.step()
-            time.sleep(0.02)  # Reduce this value for faster movement
+            # Use the configurable path_follow_delay to control simulation speed
+            time.sleep(self.path_follow_delay)
     
     def get_observation(self):
         """
@@ -448,7 +455,7 @@ class GridWorldEnv:
             new_position = self.current_location
             new_manhattan = abs(new_position[0] - self.goal[0]) + abs(new_position[1] - self.goal[1])
             
-            print(f"New position: {self.current_location}")
+            print(f"New position: {self.current_location}, Manhattan distance: {new_manhattan}")
             
             # Update CoppeliaSim if enabled and not in simulation mode
             if self.use_coppeliasim and not self.simulation_mode:
