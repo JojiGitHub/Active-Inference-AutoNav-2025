@@ -137,51 +137,6 @@ def create_bounding_locations(position, dimensions):
     
     return top_right, bottom_left, top_left, bottom_right, mid_top, mid_bottom, mid_left, mid_right
 
-def get_all_grid_points_in_obstacle(position, dimensions):
-    """
-    Get all grid points with 0.125 interval within an obstacle.
-    
-    Parameters:
-    -----------
-    position : tuple (x, y)
-        Center position of the obstacle
-    dimensions : tuple (a, b, c)
-        Dimensions of the obstacle (width, depth, height)
-        
-    Returns:
-    --------
-    list
-        All grid points with 0.125 interval that are contained within the obstacle
-    """
-    (x, y) = position
-    (a, b, c) = dimensions
-    
-    # Calculate the boundaries
-    x_min = x - a/2
-    x_max = x + a/2
-    y_min = y - b/2
-    y_max = y + b/2
-    
-    # Adding a small epsilon to ensure we include boundary points
-    epsilon = 0.0001
-    
-    # Find the closest grid points that contain the obstacle
-    x_start = math.ceil(x_min / 0.125) * 0.125
-    x_end = math.floor(x_max / 0.125) * 0.125
-    y_start = math.ceil(y_min / 0.125) * 0.125
-    y_end = math.floor(y_max / 0.125) * 0.125
-    
-    # Generate all grid points within the obstacle
-    all_grid_points = []
-    current_x = x_start
-    while current_x <= x_end + epsilon:
-        current_y = y_start
-        while current_y <= y_end + epsilon:
-            all_grid_points.append((round(current_x, 3), round(current_y, 3)))
-            current_y += 0.125
-        current_x += 0.125
-    
-    return all_grid_points
 
         
 def check_bounds(loc):
@@ -261,7 +216,6 @@ def create_cuboid(dimensions, position, orientation=None, color=None, mass=0, re
 
 
 redspots = []
-# Random positional value between 0+dim[index of coordinate(x = 0,y=1)] and 5-dim[index of coordinate]
 def initialize_environment(seed):
     global num_obstacles  # Declare we're using the global variable
     global redspots  # Ensure we're using the global redspots
@@ -273,312 +227,269 @@ def initialize_environment(seed):
     random.seed(seed)
     num_obstacles = random.randint(20, 50)
     print(f"Initializing environment with seed {seed} and {num_obstacles} obstacles")
+    
+    obstacle_dimensions = [0.25, 0.25, 0.8]  # Same dimensions for all obstacles
+    
+    def round_to_grid_precision(x):
+        """Round a coordinate to the nearest 0.125 interval."""
+        return round(x / 0.125) * 0.125
+    
+    def is_position_valid(new_x, new_y, existing_positions, dimensions):
+        """
+        Check if a new position is valid and not overlapping with existing positions.
+        
+        Parameters:
+        -----------
+        new_x : float
+            X coordinate of the new position
+        new_y : float
+            Y coordinate of the new position
+        existing_positions : list
+            List of existing obstacle positions
+        dimensions : list
+            Dimensions of the obstacle
+        
+        Returns:
+        --------
+        bool
+            True if position is valid, False otherwise
+        """
+        # First, ensure the center is at a 0.125 interval
+        new_x = round_to_grid_precision(new_x)
+        new_y = round_to_grid_precision(new_y)
+        
+        # Check environment bounds with obstacle dimensions
+        half_width = dimensions[0] / 2
+        half_depth = dimensions[1] / 2
+        
+        if (new_x - half_width < -2.5 or 
+            new_x + half_width > 2.5 or 
+            new_y - half_depth < -2.5 or 
+            new_y + half_depth > 2.5):
+            return False
+        
+        # Check overlap with existing obstacles
+        for (ex, ey) in existing_positions:
+            # Check for overlap using Axis-Aligned Bounding Box (AABB) collision detection
+            if (abs(new_x - ex) < (dimensions[0] + obstacle_dimensions[0]) and 
+                abs(new_y - ey) < (dimensions[1] + obstacle_dimensions[1])):
+                return False
+        
+        return True
+    
+    def get_grid_points_in_obstacle(center_x, center_y, dimensions):
+        """
+        Get grid points within an obstacle and a single-cell buffer around its boundary.
+        
+        Parameters:
+        -----------
+        center_x : float
+            X coordinate of obstacle center
+        center_y : float
+            Y coordinate of obstacle center
+        dimensions : list
+            Dimensions of the obstacle
+        
+        Returns:
+        --------
+        list
+            List of grid coordinates within and immediately around the obstacle boundary
+        """
+        half_width = dimensions[0] / 2
+        half_depth = dimensions[1] / 2
+        
+        # Define the basic bounds of the obstacle
+        x_min = center_x - half_width
+        x_max = center_x + half_width
+        y_min = center_y - half_depth
+        y_max = center_y + half_depth
+        
+        obstacle_points = []
+        
+        # First, collect all the grid points that fall within the obstacle itself
+        # Use intervals that align with the grid
+        x = x_min
+        while x <= x_max + 0.0001:  # Small epsilon to include boundary
+            y = y_min
+            while y <= y_max + 0.0001:
+                grid_coord = move_to_grid(x, y)
+                if isinstance(grid_coord, tuple) and grid_coord not in obstacle_points:
+                    obstacle_points.append(grid_coord)
+                y += 0.125  # Align with grid intervals
+            x += 0.125
+        
+        # Now add just a single-cell buffer around the existing points
+        buffer_points = []
+        for point in obstacle_points:
+            x_grid, y_grid = point
+            
+            # Check all 8 adjacent cells (including diagonals)
+            adjacents = [
+                (x_grid-1, y_grid), (x_grid+1, y_grid),  # Left, Right
+                (x_grid, y_grid-1), (x_grid, y_grid+1),  # Down, Up
+                (x_grid-1, y_grid-1), (x_grid+1, y_grid+1),  # Diagonal: Bottom-left, Top-right
+                (x_grid-1, y_grid+1), (x_grid+1, y_grid-1)   # Diagonal: Top-left, Bottom-right
+            ]
+            
+            for adj in adjacents:
+                # Ensure point is within grid bounds and not already added
+                if (0 <= adj[0] < grid_dims[0] and 
+                    0 <= adj[1] < grid_dims[1] and
+                    adj not in obstacle_points and
+                    adj not in buffer_points):
+                    buffer_points.append(adj)
+        
+        # Combine the original obstacle points and the buffer points
+        all_points = obstacle_points + buffer_points
+        
+        return all_points
+    
+    # Stores obstacle center positions
     obstacle_positions = []
     obstacle_handles = []
-    obstacle_dimensions = [0.3, 0.3, 0.8]  # Same dimensions for all obstacles
-    
-    # Function to check if a new position conflicts with existing obstacles
-    def is_position_valid(new_x, new_y, object_dimensions):
-        # Convert position and dimensions to format needed for bounding locations
-        new_position = (new_x, new_y)
-        
-        # Get bounding points for the new obstacle
-        new_bounds = create_bounding_locations(new_position, object_dimensions)
-        new_top_right, new_bottom_left, _, _, _, _, _, _ = new_bounds
-        
-        # Check if the new obstacle would be inside the room bounds
-        if (new_x + object_dimensions[0]/2 > 2.5 or 
-            new_x - object_dimensions[0]/2 < -2.5 or
-            new_y + object_dimensions[1]/2 > 2.5 or
-            new_y - object_dimensions[1]/2 < -2.5):
-            return False
-        
-        # Check against all existing obstacles
-        for pos in obstacle_positions:
-            existing_x, existing_y = pos[0], pos[1]
-            existing_position = (existing_x, existing_y)
-            
-            # Get bounding points for existing obstacle
-            existing_bounds = create_bounding_locations(existing_position, obstacle_dimensions)
-            existing_top_right, existing_bottom_left, _, _, _, _, _, _ = existing_bounds
-            
-            # Check for overlap using AABB collision detection
-            # If one rectangle is to the left of the other
-            if (new_top_right[0] < existing_bottom_left[0] or 
-                existing_top_right[0] < new_bottom_left[0]):
-                continue
-                
-            # If one rectangle is above the other
-            if (new_top_right[1] < existing_bottom_left[1] or 
-                existing_top_right[1] < new_bottom_left[1]):
-                continue
-                
-            # If we get here, the rectangles overlap
-            return False
-            
-        # If we've checked all obstacles and found no overlaps
-        return True
     
     # Create obstacles
     for i in range(num_obstacles):
-        # Try to find a valid position (up to 100 attempts)
-        valid_position = False
         attempts = 0
-        
-        while not valid_position and attempts < 100:
-            # Generate random position
-            x = round(random.uniform(-2.5 + (obstacle_dimensions[0]/2 + 0.1), 
-                                     2.5 - (obstacle_dimensions[0]/2 + 0.1)), 2)
-            y = round(random.uniform(-2.5 + (obstacle_dimensions[1]/2 + 0.1), 
-                                     2.5 - (obstacle_dimensions[1]/2 + 0.1)), 2)
+        while attempts < 100:
+            # Generate random position ensuring it aligns with 0.125 grid
+            x = round_to_grid_precision(random.uniform(-2.25, 2.25))
+            y = round_to_grid_precision(random.uniform(-2.25, 2.25))
             
-            # Check if this position is valid
-            valid_position = is_position_valid(x, y, obstacle_dimensions)
+            # Check if position is valid
+            if is_position_valid(x, y, obstacle_positions, obstacle_dimensions):
+                obstacle_positions.append((x, y))
+                
+                # Create obstacle in CoppeliaSim if not in simulation mode
+                if not SIMULATION_MODE:
+                    try:
+                        obstacle_handle = create_cuboid(
+                            dimensions=obstacle_dimensions,
+                            position=[x, y, 0.4],  # z=0.4 is half the height
+                            orientation=[0, 0, 0],
+                            color=[1, 0, 0],  # Red color
+                            mass=1,
+                            respondable=True,
+                            name=f"Obstacle{i}"
+                        )
+                        obstacle_handles.append(obstacle_handle)
+                    except Exception as e:
+                        print(f"Error creating obstacle: {e}")
+                        obstacle_handles.append(i)  # Dummy handle
+                else:
+                    obstacle_handles.append(i)  # Dummy handle
+                
+                break
+            
             attempts += 1
-            
-        if valid_position:
-            # Add position to our list
-            obstacle_positions.append((x, y))
-            
-            # Create the obstacle in CoppeliaSim if not in simulation mode
-            if not SIMULATION_MODE:
-                try:
-                    obstacle = create_cuboid(
-                        dimensions=obstacle_dimensions,
-                        position=[x, y, 0.4],  # z=0.4 is half the height
-                        orientation=[0, 0, 0],
-                        color=[1, 0, 0],
-                        mass=1,
-                        respondable=True,
-                        name=f"Obstacle{i}"
-                    )
-                    obstacle_handles.append(obstacle)
-                    print(f"Created Obstacle{i} at position [{x}, {y}, 0.4]")
-                except Exception as e:
-                    print(f"Error creating obstacle: {e}")
-                    # Use a dummy handle in simulation mode
-                    obstacle_handles.append(i)  # Just use the index as a dummy handle
-            else:
-                # Use a dummy handle in simulation mode
-                obstacle_handles.append(i)  # Just use the index as a dummy handle
-                print(f"Simulated Obstacle{i} at position [{x}, {y}, 0.4]")
-        else:
-            print(f"Could not find valid position for Obstacle{i} after {attempts} attempts")
     
-    # Now create the single flat object with dimensions [0.125, 0.125, 0.01]
-    flat_object_dimensions = [0.125, 0.125, 0.01]
-    valid_position = False
-    attempts = 0
+    # Add obstacle grid points to redspots
+    for (x, y) in obstacle_positions:
+        # Add obstacle center to redspots
+        center_grid = move_to_grid(x, y)
+        if isinstance(center_grid, tuple) and center_grid not in redspots:
+            redspots.append(center_grid)
+        
+        # Add all grid points within the obstacle
+        obstacle_grid_points = get_grid_points_in_obstacle(x, y, obstacle_dimensions)
+        for point in obstacle_grid_points:
+            if point not in redspots:
+                redspots.append(point)
+    
+    # Find goal location
+    goal_dimensions = [0.125, 0.125, 0.01]
     goal_position = None
     goal_handle = None
     
-    while not valid_position and attempts < 100:
-        # Generate random position
-        x = round(random.uniform(-2.5 + (flat_object_dimensions[0]/2 + 0.1), 
-                                 2.5 - (flat_object_dimensions[0]/2 + 0.1)), 2)
-        y = round(random.uniform(-2.5 + (flat_object_dimensions[1]/2 + 0.1), 
-                                 2.5 - (flat_object_dimensions[1]/2 + 0.1)), 2)
+    while attempts < 100:
+        # Generate goal position with 0.125 precision
+        x = round_to_grid_precision(random.uniform(-2.25, 2.25))
+        y = round_to_grid_precision(random.uniform(-2.25, 2.25))
         
-        # Check if this position is valid
-        valid_position = is_position_valid(x, y, flat_object_dimensions)
-        attempts += 1
+        # Check if goal is far enough from obstacles
+        is_valid_goal = True
+        for (ox, oy) in obstacle_positions:
+            if ((x - ox)**2 + (y - oy)**2)**0.5 < 0.375:  # At least 0.125 away
+                is_valid_goal = False
+                break
         
-    if valid_position:
-        # Create the goal object in CoppeliaSim if not in simulation mode
-        if not SIMULATION_MODE:
-            try:
-                # Create the flat object (z=0.005 is half the height of 0.01)
-                goal_handle = create_cuboid(
-                    dimensions=flat_object_dimensions,
-                    position=[x, y, 0.005],  
-                    orientation=[0, 0, 0],
-                    color=[0, 1, 0],  # Green to distinguish from obstacles
-                    mass=0.1,
-                    respondable=True,
-                    name="Goal_Loc"  # Renamed as requested
-                )
-                print(f"Created Goal_Loc at position [{x}, {y}, 0.005]")
-            except Exception as e:
-                print(f"Error creating goal object: {e}")
-                # Use a dummy handle in simulation mode
-                goal_handle = -999  # Dummy handle
-        else:
-            # Use a dummy handle in simulation mode
-            goal_handle = -999  # Dummy handle
-            print(f"Simulated Goal_Loc at position [{x}, {y}, 0.005]")
-        
-        goal_position = (x, y, 0.005)
-    else:
-        print(f"Could not find valid position for Goal_Loc after {attempts} attempts")
-    
-    # Now place bubbleRob at a random position with no overlap
-    # First, collect all positions to avoid (obstacles and goal)
-    all_positions = obstacle_positions.copy()
-    if goal_position:
-        all_positions.append((goal_position[0], goal_position[1]))  # Only need x,y from goal
-    
-    # Estimate bubbleRob dimensions (assuming it's roughly 0.2 x 0.2)
-    bubbleRob_dimensions = [0.2, 0.2, 0.2]  # Approximate dimensions
-    
-    valid_position = False
-    attempts = 0
-    bubbleRob_position = None
-    
-    # Function to check if bubbleRob position is valid
-    def is_bubbleRob_position_valid(new_x, new_y):
-        # Check if within bounds (-2 to 2 as specified)
-        if new_x > 2 or new_x < -2 or new_y > 2 or new_y < -2:
-            return False
-        
-        # Create bubbleRob position and bounds
-        new_position = (new_x, new_y)
-        new_bounds = create_bounding_locations(new_position, bubbleRob_dimensions)
-        new_top_right, new_bottom_left, _, _, _, _, _, _ = new_bounds
-        
-        # Check against obstacles
-        for i, pos in enumerate(obstacle_positions):
-            existing_x, existing_y = pos[0], pos[1]
-            existing_position = (existing_x, existing_y)
+        if is_valid_goal:
+            goal_position = (x, y)
             
-            # Get bounding points for existing obstacle
-            existing_bounds = create_bounding_locations(existing_position, obstacle_dimensions)
-            existing_top_right, existing_bottom_left, _, _, _, _, _, _ = existing_bounds
-            
-            # Check for overlap using AABB collision detection
-            if not (new_top_right[0] < existing_bottom_left[0] or 
-                    existing_top_right[0] < new_bottom_left[0] or
-                    new_top_right[1] < existing_bottom_left[1] or 
-                    existing_top_right[1] < new_bottom_left[1]):
-                # Overlap detected
-                return False
-                
-        # Check against goal if it exists
-        if goal_position:
-            goal_x, goal_y = goal_position[0], goal_position[1]
-            goal_pos = (goal_x, goal_y)
-            
-            # Get bounding points for goal
-            goal_bounds = create_bounding_locations(goal_pos, flat_object_dimensions)
-            goal_top_right, goal_bottom_left, _, _, _, _, _, _ = goal_bounds
-            
-            # Check for overlap with goal
-            if not (new_top_right[0] < goal_bottom_left[0] or 
-                    goal_top_right[0] < new_bottom_left[0] or
-                    new_top_right[1] < goal_bottom_left[1] or 
-                    goal_top_right[1] < new_bottom_left[1]):
-                # Overlap detected
-                return False
-        
-        # If we get here, position is valid
-        return True
-    
-    while not valid_position and attempts < 100:
-        # Generate random position between -2 and 2 as specified
-        x = round(random.uniform(-2.0 + (bubbleRob_dimensions[0]/2), 
-                                 2.0 - (bubbleRob_dimensions[0]/2)), 2)
-        y = round(random.uniform(-2.0 + (bubbleRob_dimensions[1]/2), 
-                                 2.0 - (bubbleRob_dimensions[1]/2)), 2)
-        
-        # Check if this position is valid
-        valid_position = is_bubbleRob_position_valid(x, y)
-        attempts += 1
-    
-    if valid_position:
-        # Place bubbleRob in CoppeliaSim if not in simulation mode
-        if not SIMULATION_MODE:
-            try:
-                # Get the handle for bubbleRob
-                bubbleRob_handle = sim.getObject('/bubbleRob')
-                if bubbleRob_handle != -1:  # -1 means object not found
-                    # Set bubbleRob position (z=0.05 assuming that's appropriate for bubbleRob's height)
-                    sim.setObjectPosition(bubbleRob_handle, -1, [x, y, 0.12])
-                    print(f"Placed bubbleRob at position [{x, y, 0.12}]")
-                else:
-                    print("bubbleRob object not found in the scene!")
-            except Exception as e:
-                print(f"Error placing bubbleRob: {e}")
-                
-        else:
-            # Just log in simulation mode
-            print(f"Simulated bubbleRob placement at [{x}, {y}, 0.12]")
-            
-        # Store the position regardless of simulation mode
-        bubbleRob_position = (x, y, 0.12)
-    else:
-        print(f"Could not find valid position for bubbleRob after {attempts} attempts")
-        # Use default position in case of failure
-        bubbleRob_position = (0, 0, 0.12)
-    
-    # Return all obstacle positions as a flat list: [x1, y1, x2, y2, ...] and other positions
-    flat_positions = []
-    for pos in obstacle_positions:
-        flat_positions.extend(pos)
-    
-    # Process obstacles to generate redspots
-    for obstacle_num in range(len(obstacle_positions)):
-        obstacle_name = f'Obstacle{obstacle_num}'
-        obstacle_position = obstacle_positions[obstacle_num]
-   
-        try:
-            # In simulation mode, use the obstacle positions directly
-            if SIMULATION_MODE:
-                obstacle_position_list = [obstacle_position[0], obstacle_position[1], 0.4]
-                print(f"Using simulated position for {obstacle_name}: {obstacle_position_list}")
-            else:
-                # Try to get position from CoppeliaSim
+            # Create goal in CoppeliaSim if not in simulation mode
+            if not SIMULATION_MODE:
                 try:
-                    obstacle_position_list = get_object_position(obstacle_name)
+                    goal_handle = create_cuboid(
+                        dimensions=goal_dimensions,
+                        position=[x, y, 0.005],  # z=0.005 is half the height
+                        orientation=[0, 0, 0],
+                        color=[0, 1, 0],  # Green color
+                        mass=0.1,
+                        respondable=True,
+                        name="Goal_Loc"
+                    )
                 except Exception as e:
-                    print(f"Error getting position for {obstacle_name}, using stored position: {e}")
-                    obstacle_position_list = [obstacle_position[0], obstacle_position[1], 0.4]
+                    print(f"Error creating goal: {e}")
+                    goal_handle = num_obstacles  # Dummy handle
+            else:
+                goal_handle = num_obstacles  # Dummy handle
             
-            # Using the same dimensions for all obstacles as defined in initialize_environment
-            obstacle_dimensions = (0.3, 0.3, 0.8)  # Match the dimensions from initialize_environment
+            break
+        
+        attempts += 1
+    
+    if goal_position is None:
+        raise ValueError("Could not place goal within environment constraints")
+    
+    # Place bubbleRob
+    bubbleRob_position = None
+    attempts = 0
+    while attempts < 100:
+        # Generate bubbleRob position with 0.125 precision
+        x = round_to_grid_precision(random.uniform(-2.25, 2.25))
+        y = round_to_grid_precision(random.uniform(-2.25, 2.25))
+        
+        # Check if bubbleRob is far enough from obstacles and goal
+        is_valid_pos = True
+        for (ox, oy) in obstacle_positions:
+            if ((x - ox)**2 + (y - oy)**2)**0.5 < 0.375:  # At least 0.125 away
+                is_valid_pos = False
+                break
+        
+        # Check distance from goal
+        if is_valid_pos and goal_position:
+            if ((x - goal_position[0])**2 + (y - goal_position[1])**2)**0.5 < 0.375:
+                is_valid_pos = False
+        
+        if is_valid_pos:
+            # Place bubbleRob in CoppeliaSim if not in simulation mode
+            if not SIMULATION_MODE:
+                try:
+                    bubbleRob_handle = sim.getObject('/bubbleRob')
+                    if bubbleRob_handle != -1:
+                        sim.setObjectPosition(bubbleRob_handle, -1, [x, y, 0.12])
+                    bubbleRob_position = (x, y, 0.12)
+                except Exception as e:
+                    print(f"Error placing bubbleRob: {e}")
+                    bubbleRob_position = (x, y, 0.12)
+            else:
+                bubbleRob_position = (x, y, 0.12)
             
-            print(f"Processing {obstacle_name}...")
-            
-            # Get all grid points within this obstacle at 0.125 intervals
-            grid_points_in_obstacle = get_all_grid_points_in_obstacle(
-                (obstacle_position_list[0], obstacle_position_list[1]), 
-                obstacle_dimensions
-            )
-            
-            # Convert each Coppelia coordinate to grid coordinates
-            for point in grid_points_in_obstacle:
-                x, y = point
-                grid_position = move_to_grid(x, y)
-                
-                # Only append valid grid positions
-                if isinstance(grid_position, tuple):
-                    # Check if this grid position is already in redspots (avoid duplicates)
-                    if grid_position not in redspots:
-                        redspots.append(grid_position)
-                else:
-                    print(f"Warning: Invalid grid position for {obstacle_name} at {point}: {grid_position}")
-                
-        except Exception as e:
-            print(f"Error processing {obstacle_name}: {e}")
-
+            break
+        
+        attempts += 1
+    
+    if bubbleRob_position is None:
+        raise ValueError("Could not place bubbleRob within environment constraints")
+    
     print(f"Total redspots collected: {len(redspots)}")
-    print("Redspots:", redspots)
+    print(redspots)
     
-    # Convert goal position to grid coordinates
-    if goal_position:
-        goal_grid = move_to_grid(goal_position[0], goal_position[1])
-        if isinstance(goal_grid, tuple):
-            print(f"Goal in grid coordinates: {goal_grid}")
-        else:
-            print(f"Warning: Invalid goal grid position: {goal_grid}")
+    # Flatten obstacle positions for the first return value
+    flat_positions = [coord for pos in obstacle_positions for coord in pos]
     
-    # Convert bubbleRob position to grid coordinates
-    if bubbleRob_position:
-        bubbleRob_grid = move_to_grid(bubbleRob_position[0], bubbleRob_position[1])
-        if isinstance(bubbleRob_grid, tuple):
-            print(f"BubbleRob in grid coordinates: {bubbleRob_grid}")
-        else:
-            print(f"Warning: Invalid bubbleRob grid position: {bubbleRob_grid}")
-    
-    return flat_positions, goal_position, obstacle_handles, goal_handle, bubbleRob_position, redspots
+    return flat_positions, goal_position, obstacle_handles, goal_handle, bubbleRob_position, redspots              
+
 
 
 def clear_environment(obstacle_handles=None, goal_handle=None):
@@ -956,6 +867,24 @@ class CoppeliaEnv():
         self.loc_obs = self.current_location
         self.green_obs, self.white_obs, self.red_obs, self.agent_reward = 'Null', ['Null'], ['Null'], 0
         
+        # Initialize vision with current coordinates
+        self.vision = update_vision(self.current_location, grid_dims, 6)
+
+        # Update observations based on vision and redspots
+        for spot in self.vision:
+            if spot in self.redspots:
+                if 'Null' in self.red_obs:
+                    self.red_obs = [spot]
+                else:
+                    self.red_obs.append(spot)
+            elif spot == self.goal:
+                self.green_obs = spot
+            else:
+                if 'Null' in self.white_obs:
+                    self.white_obs = [spot]
+                else:
+                    self.white_obs.append(spot)
+        
         # Reset robot position in CoppeliaSim if not in simulation mode
         if not self.simulation_mode:
             try:
@@ -975,3 +904,4 @@ class CoppeliaEnv():
 
 
 
+initialize_environment(4)

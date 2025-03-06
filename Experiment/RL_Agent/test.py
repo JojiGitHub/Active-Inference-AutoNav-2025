@@ -49,6 +49,8 @@ def evaluate_episode(agent, env, max_steps=100, render=False, step_delay=0.0):
     total_reward = 0
     steps = 0
     reached_goal = False
+    hit_obstacle = False
+    hit_wall = False
     
     while not done and steps < max_steps:
         action = agent.select_action(state, testing=True)
@@ -63,6 +65,17 @@ def evaluate_episode(agent, env, max_steps=100, render=False, step_delay=0.0):
         total_reward += reward
         steps += 1
         
+        # Track if we hit a wall
+        if ((action == 0 and env.y == 0) or  # UP
+            (action == 1 and env.y == env.grid_dimensions[1] - 1) or  # DOWN
+            (action == 2 and env.x == 0) or  # LEFT
+            (action == 3 and env.x == env.grid_dimensions[0] - 1)):  # RIGHT
+            hit_wall = True
+        
+        # If reward is very negative, we likely hit an obstacle
+        if reward <= -10:
+            hit_obstacle = True
+        
         if render and steps % 5 == 0:  # Render every 5 steps
             env.render()
             time.sleep(0.1)  # Slow down visualization
@@ -75,6 +88,8 @@ def evaluate_episode(agent, env, max_steps=100, render=False, step_delay=0.0):
         'reward': total_reward,
         'steps': steps,
         'reached_goal': reached_goal,
+        'hit_obstacle': hit_obstacle,
+        'hit_wall': hit_wall,
         'final_distance': info['manhattan_distance']
     }
 
@@ -83,8 +98,8 @@ def run_evaluation(model_path, num_episodes=50, test_seeds=None):
     if test_seeds is None:
         test_seeds = [42, 100, 200, 300, 400, 500, 600, 700, 800, 900]  # 10 different seeds
     
-    # Load model
-    state_dim = 29  # Updated state dimension (25 vision + 4 coordinates)
+    # Load model with correct state dimensions
+    state_dim = 29  # 25 vision cells + 4 coordinates (keeping original dimension)
     action_dim = 5
     agent = ImprovedDQNAgent(state_dim=state_dim, action_dim=action_dim)
     
@@ -109,11 +124,17 @@ def run_evaluation(model_path, num_episodes=50, test_seeds=None):
             # Print progress every 10 episodes
             if (episode + 1) % 10 == 0:
                 success_rate = sum(r['reached_goal'] for r in seed_results) / len(seed_results)
+                obstacle_hits = sum(r['hit_obstacle'] for r in seed_results)
+                wall_hits = sum(r['hit_wall'] for r in seed_results)
                 print(f"Seed {seed} - Episode {episode + 1}/{num_episodes}, "
-                      f"Success Rate: {success_rate:.2f}")
+                      f"Success Rate: {success_rate:.2f}, "
+                      f"Obstacle collisions: {obstacle_hits}, "
+                      f"Wall collisions: {wall_hits}")
         
         # Compute metrics for this seed
         successes = sum(r['reached_goal'] for r in seed_results)
+        obstacle_hits = sum(r['hit_obstacle'] for r in seed_results)
+        wall_hits = sum(r['hit_wall'] for r in seed_results)
         success_rate = successes / num_episodes
         avg_reward = np.mean([r['reward'] for r in seed_results])
         avg_steps = np.mean([r['steps'] for r in seed_results])
@@ -125,6 +146,8 @@ def run_evaluation(model_path, num_episodes=50, test_seeds=None):
             'avg_reward': avg_reward,
             'avg_steps': avg_steps,
             'success_steps': success_steps,
+            'obstacle_hits': obstacle_hits,
+            'wall_hits': wall_hits,
             'individual_results': seed_results
         })
         
@@ -132,6 +155,8 @@ def run_evaluation(model_path, num_episodes=50, test_seeds=None):
         print(f"Success Rate: {success_rate:.2f}")
         print(f"Average Reward: {avg_reward:.2f}")
         print(f"Average Steps: {avg_steps:.1f}")
+        print(f"Obstacle Collisions: {obstacle_hits}/{num_episodes} ({obstacle_hits/num_episodes:.2%})")
+        print(f"Wall Collisions: {wall_hits}/{num_episodes} ({wall_hits/num_episodes:.2%})")
         print(f"Average Steps (Successful): {success_steps:.1f}" if successes > 0 else "No successful episodes")
         
         # Clean up environment
@@ -141,27 +166,53 @@ def run_evaluation(model_path, num_episodes=50, test_seeds=None):
     overall_success_rate = np.mean([r['success_rate'] for r in results])
     overall_reward = np.mean([r['avg_reward'] for r in results])
     overall_steps = np.mean([r['avg_steps'] for r in results])
+    total_obstacle_hits = sum([r['obstacle_hits'] for r in results])
+    total_wall_hits = sum([r['wall_hits'] for r in results])
+    total_episodes = len(test_seeds) * num_episodes
     
     print("\nOverall Performance:")
     print(f"Average Success Rate: {overall_success_rate:.2f}")
     print(f"Average Reward: {overall_reward:.2f}")
     print(f"Average Steps: {overall_steps:.1f}")
+    print(f"Total Obstacle Collisions: {total_obstacle_hits}/{total_episodes} ({total_obstacle_hits/total_episodes:.2%})")
+    print(f"Total Wall Collisions: {total_wall_hits}/{total_episodes} ({total_wall_hits/total_episodes:.2%})")
     
     # Plot results
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(12, 8))
+    
+    # Success rates subplot
+    plt.subplot(2, 1, 1)
     success_rates = [r['success_rate'] for r in results]
     plt.bar(range(len(test_seeds)), success_rates)
     plt.xlabel('Seed Index')
     plt.ylabel('Success Rate')
-    plt.title('Model Performance Across Different Seeds')
+    plt.title('Model Success Rate Across Different Seeds')
     plt.axhline(y=overall_success_rate, color='r', linestyle='--', label='Average')
     plt.legend()
+    
+    # Collision rates subplot
+    plt.subplot(2, 1, 2)
+    obstacle_rates = [r['obstacle_hits'] / num_episodes for r in results]
+    wall_rates = [r['wall_hits'] / num_episodes for r in results]
+    
+    x = np.arange(len(test_seeds))
+    width = 0.35
+    plt.bar(x - width/2, obstacle_rates, width, label='Obstacle Collisions')
+    plt.bar(x + width/2, wall_rates, width, label='Wall Collisions')
+    plt.xlabel('Seed Index')
+    plt.ylabel('Collision Rate')
+    plt.title('Collision Rates Across Different Seeds')
+    plt.legend()
+    
+    plt.tight_layout()
     plt.show()
     
     return results, {
         'overall_success_rate': overall_success_rate,
         'overall_reward': overall_reward,
-        'overall_steps': overall_steps
+        'overall_steps': overall_steps,
+        'obstacle_collision_rate': total_obstacle_hits/total_episodes,
+        'wall_collision_rate': total_wall_hits/total_episodes
     }
 
 def check_coppelia_connection():
@@ -269,8 +320,8 @@ def main(use_coppeliasim=False, random_seed=42, render_visualization=False, sim_
             print("Could not connect to CoppeliaSim. Running in grid-only mode.")
             use_coppeliasim = False
     
-    # Create agent instance for visualization
-    state_dim = 29  # Updated state dimension (25 vision + 4 coordinates)
+    # Create agent instance for visualization with correct state dimensions
+    state_dim = 29  # 25 vision cells + 4 coordinates (keeping original dimension)
     action_dim = 5
     vis_agent = ImprovedDQNAgent(state_dim=state_dim, action_dim=action_dim)
     
@@ -305,8 +356,13 @@ def main(use_coppeliasim=False, random_seed=42, render_visualization=False, sim_
         print("Setting environment path following delay to 0.1 seconds")
         env.path_follow_delay = 0.1  # Set longer delay for path following
     
+    # Run a more comprehensive test with 5 visualization episodes
+    obstacle_collisions = 0
+    wall_collisions = 0
+    successes = 0
+    
     try:
-        for i in range(3):
+        for i in range(5):  # Increased from 3 to 5 episodes
             print(f"\nVisualization Episode {i+1}")
             result = evaluate_episode(
                 vis_agent, 
@@ -315,7 +371,25 @@ def main(use_coppeliasim=False, random_seed=42, render_visualization=False, sim_
                 step_delay=sim_speed
             )
             print(f"Episode Result - Reward: {result['reward']:.2f}, "
-                f"Steps: {result['steps']}, Goal Reached: {result['reached_goal']}")
+                  f"Steps: {result['steps']}, Goal Reached: {result['reached_goal']}")
+            
+            if result['hit_obstacle']:
+                obstacle_collisions += 1
+                print("WARNING: Agent hit an obstacle!")
+                
+            if result['hit_wall']:
+                wall_collisions += 1
+                print("WARNING: Agent hit a wall!")
+                
+            if result['reached_goal']:
+                successes += 1
+                
+        # Print summary
+        print("\nTest Summary:")
+        print(f"Success Rate: {successes/5:.2f}")
+        print(f"Obstacle Collisions: {obstacle_collisions}/5")
+        print(f"Wall Collisions: {wall_collisions}/5")
+        
     finally:
         # Make sure to clean up even if there's an error
         print("Cleaning up environment...")
@@ -325,10 +399,10 @@ def main(use_coppeliasim=False, random_seed=42, render_visualization=False, sim_
 
 if __name__ == "__main__":
     # Simple hyperparameters for testing
-    USE_COPPELIASIM = True  # Set this to False to disable CoppeliaSim
+    USE_COPPELIASIM = False  # Set this to False to disable CoppeliaSim
     RANDOM_SEED = 42        # Change this to use a different random seed
-    RENDER = False          # Set this to True to render the grid visualization 
-    SIM_SPEED = 0.001         # Delay in seconds between steps (2.0 = 2 second delay, increased from 0.5)
+    RENDER = True           # Set this to True to render the grid visualization 
+    SIM_SPEED = 0.5         # Delay in seconds between steps (0.5 = half second delay)
     
     # Run the main function with the specified parameters
     main(

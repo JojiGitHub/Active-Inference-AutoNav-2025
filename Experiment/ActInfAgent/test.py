@@ -1,12 +1,14 @@
 import numpy as np
 import pandas as pd
 import random
+import matplotlib.pyplot as plt
+from matplotlib import colors
 from datetime import datetime
 try:
-    from ActInfAgent.agent import create_redspot_agent
+    from ActInfAgent.agent import create_redspot_agent, update_vision_matrix, create_color_observation
     from ActInfAgent.env import initialize_environment, CoppeliaEnv, move_to_grid, get_object_position
 except:
-    from agent import create_redspot_agent
+    from agent import create_redspot_agent, update_vision_matrix, create_color_observation
     from env import initialize_environment, CoppeliaEnv, move_to_grid, get_object_position
 
 def initialize_experiment(random_seed=42):
@@ -14,7 +16,7 @@ def initialize_experiment(random_seed=42):
     Initialize the experiment with a given random seed.
     
     Args:
-        random_seed (int): Seed for random number generation to ensure reproducibility
+        random_seed (int): Random seed for random number generation to ensure reproducibility
         
     Returns:
         tuple: (agent, env, grid_locations, actions, agent_pos, goal_location, metrics_dict)
@@ -40,8 +42,9 @@ def initialize_experiment(random_seed=42):
     print(f"Agent starting position: {agent_pos}")
     print(f"Goal location: {goal_location}")
     print(f"Number of red spots: {len(redspots)}")
+
     
-    # Initialize Active Inference agent
+    # Initialize Active Inference agent - vision_matrix will be initialized here
     agent, grid_locations, actions = create_redspot_agent(
         agent_pos=agent_pos,
         goal_location=goal_location,
@@ -101,7 +104,86 @@ def calculate_shannon_entropy(q):
     q_nonzero = q_array[nonzero_mask]
     return -np.sum(q_nonzero * np.log(q_nonzero))
 
-def run_episode(agent, env, grid_locations, actions, goal_location, metrics_dict, max_steps=100):
+def visualize_gridworld(agent_pos, redspots, goal_pos, grid_dims=[40, 40], title=None, save_path=None, show=True):
+    """
+    Visualize the gridworld with agent, redspots, and goal
+    
+    Args:
+        agent_pos (tuple): Current position of the agent (x, y)
+        redspots (list or set): Collection of redspot positions [(x1, y1), (x2, y2), ...]
+        goal_pos (tuple): Position of the goal (x, y)
+        grid_dims (list): Dimensions of the grid [width, height]
+        title (str): Title for the plot
+        save_path (str): Path to save the visualization (if None, won't save)
+        show (bool): Whether to show the plot
+        
+    Returns:
+        matplotlib.figure.Figure: The figure object
+    """
+    # Print debugging info
+    print(f"Visualizing gridworld - Agent: {agent_pos}, Goal: {goal_pos}, Redspots: {len(redspots)} spots")
+    
+    # Create a grid filled with zeros (empty spaces)
+    grid = np.zeros(grid_dims)
+    
+    # Mark redspots with value 1 (danger)
+    for spot in redspots:
+        if isinstance(spot, tuple) and len(spot) == 2:
+            x, y = spot
+            if 0 <= x < grid_dims[0] and 0 <= y < grid_dims[1]:
+                grid[y, x] = 1  # Note: y is first index in numpy arrays
+                
+    # Print first 10 redspots for verification (convert to list if it's a set)
+    redspots_sample = list(redspots)[:10] if isinstance(redspots, set) else redspots[:10]
+    print(f"Sample redspots: {redspots_sample}")
+    
+    # Mark goal with value 2 (reward)
+    if isinstance(goal_pos, tuple) and len(goal_pos) == 2:
+        gx, gy = goal_pos
+        if 0 <= gx < grid_dims[0] and 0 <= gy < grid_dims[1]:
+            grid[gy, gx] = 2
+    
+    # Create a custom colormap: white=empty, red=danger, green=goal, blue=agent
+    cmap = colors.ListedColormap(['white', 'red', 'green', 'blue'])
+    bounds = [0, 0.5, 1.5, 2.5, 3.5]
+    norm = colors.BoundaryNorm(bounds, cmap.N)
+    
+    # Create plot
+    fig, axis = plt.subplots(figsize=(10, 10))
+    img = axis.imshow(grid, cmap=cmap, norm=norm)
+    
+    # Mark agent position with blue dot
+    if isinstance(agent_pos, tuple) and len(agent_pos) == 2:
+        agent_x, agent_y = agent_pos
+        if 0 <= agent_x < grid_dims[0] and 0 <= agent_y < grid_dims[1]:
+            axis.plot(agent_x, agent_y, 'o', markersize=15, color='blue')
+    
+    # Add a colorbar
+    cbar = plt.colorbar(img, ticks=[0.25, 1, 2, 3])
+    cbar.ax.set_yticklabels(['Empty', 'Danger', 'Goal', 'Agent'])
+    
+    # Set title if provided
+    if title:
+        axis.set_title(title)
+    
+    # Add grid lines
+    axis.grid(True, which='both', color='gray', linestyle='-', linewidth=0.5, alpha=0.3)
+    
+    # Save if path provided
+    if save_path:
+        plt.savefig(save_path)
+        print(f"Saved visualization to {save_path}")
+    
+    # Show if requested
+    if show:
+        print("Displaying plot...")
+        plt.show()
+    else:
+        plt.close()
+    
+    return fig
+
+def run_episode(agent, env, grid_locations, actions, goal_location, metrics_dict, max_steps=100, visualize=False):
     """
     Run a single episode of the Active Inference agent
     
@@ -113,17 +195,45 @@ def run_episode(agent, env, grid_locations, actions, goal_location, metrics_dict
         goal_location: Target location
         metrics_dict: Dictionary to store metrics
         max_steps (int): Maximum number of steps per episode
+        visualize (bool): Whether to visualize the gridworld at each step
         
     Returns:
         dict: Updated metrics dictionary with episode data
     """
+    from agent import vision_matrix  # Import vision_matrix at function scope
+    
     # Reset environment
     loc_obs, green_obs, white_obs, red_obs, reward = env.reset()
+    
+    # Create directory for visualizations if needed
+    if visualize:
+        import os
+        vis_dir = f"gridworld_vis_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        os.makedirs(vis_dir, exist_ok=True)
+        print(f"Saving visualizations to {vis_dir}/")
+        
+        # Initial visualization
+        visualize_gridworld(
+            agent_pos=loc_obs, 
+            redspots=env.redspots, 
+            goal_pos=env.goal,
+            title=f"Step 0: Initial State",
+            save_path=f"{vis_dir}/step_0.png",
+            show=False
+        )
     
     # Run episode
     for step in range(max_steps):
         # Create observation for agent
         obs = [grid_locations.index(loc_obs), create_color_observation(loc_obs, red_obs, green_obs, white_obs)]
+        
+        # Update vision matrix based on observations
+        global vision_matrix  # Ensure we're using the global vision_matrix
+        update_vision_matrix(vision_matrix, obs)
+        surrounding_locs = env.vision
+        for loc in surrounding_locs:
+            loc_obs_surrounding = [grid_locations.index(loc), create_color_observation(loc, red_obs, green_obs, white_obs)]
+            update_vision_matrix(vision_matrix, loc_obs_surrounding)
         
         # Get agent's action
         qs = agent.infer_states(obs)
@@ -151,18 +261,51 @@ def run_episode(agent, env, grid_locations, actions, goal_location, metrics_dict
         metrics_dict['shannon_entropy'].append(shannon_entropy)
         metrics_dict['goal_distance'].append(goal_distance)
         
+        # Visualize current state
+        if visualize:
+            visualize_gridworld(
+                agent_pos=loc_obs, 
+                redspots=env.redspots, 
+                goal_pos=env.goal,
+                title=f"Step {step+1}: Action={action}, Reward={reward}",
+                save_path=f"{vis_dir}/step_{step+1}.png",
+                show=False
+            )
+        
         # Take action in environment
         loc_obs, green_obs, white_obs, red_obs, reward = env.step(action)
         
         # Check if goal reached
         if loc_obs == goal_location:
             print(f"Goal reached in {step+1} steps!")
+            
+            # Final visualization if goal reached
+            if visualize:
+                visualize_gridworld(
+                    agent_pos=loc_obs, 
+                    redspots=env.redspots, 
+                    goal_pos=env.goal,
+                    title=f"Step {step+1} (FINAL): Goal Reached!",
+                    save_path=f"{vis_dir}/step_{step+1}_final.png",
+                    show=False
+                )
             break
     
     # Add final step data if goal wasn't reached
     if loc_obs != goal_location and step == max_steps-1:
         print(f"Goal not reached after {max_steps} steps.")
         
+        # Final visualization if max steps reached
+        if visualize:
+            visualize_gridworld(
+                agent_pos=loc_obs, 
+                redspots=env.redspots, 
+                goal_pos=env.goal,
+                title=f"Step {step+1} (FINAL): Max Steps Reached",
+                save_path=f"{vis_dir}/step_{step+1}_final.png",
+                show=False
+            )
+    
     # Store final outcome
     metrics_dict['goal_reached'] = loc_obs == goal_location
     metrics_dict['total_steps'] = step + 1
@@ -180,7 +323,7 @@ def create_color_observation(position, red_obs, green_obs, white_obs):
     else:
         return 0  # WHITE (default case for unknown or white positions)
 
-def run_experiment(random_seed=42, max_steps=100, save_data=True):
+def run_experiment(random_seed=42, max_steps=100, save_data=True, visualize=False):
     """
     Run a complete experiment with data collection
     
@@ -188,6 +331,7 @@ def run_experiment(random_seed=42, max_steps=100, save_data=True):
         random_seed (int): Random seed for reproducibility
         max_steps (int): Maximum steps per episode
         save_data (bool): Whether to save data to CSV
+        visualize (bool): Whether to visualize the gridworld at each step
         
     Returns:
         pd.DataFrame: DataFrame containing experiment results
@@ -196,7 +340,7 @@ def run_experiment(random_seed=42, max_steps=100, save_data=True):
     agent, env, grid_locations, actions, agent_pos, goal_location, metrics_dict = initialize_experiment(random_seed)
     
     # Run episode
-    metrics = run_episode(agent, env, grid_locations, actions, goal_location, metrics_dict, max_steps)
+    metrics = run_episode(agent, env, grid_locations, actions, goal_location, metrics_dict, max_steps, visualize)
     
     # Convert metrics to DataFrame
     df = pd.DataFrame({
@@ -256,7 +400,35 @@ def test_active_inference(random_seed=42, num_steps=100, policy_len=3):
     return results
 
 if __name__ == "__main__":
-    # Run test with a specific random seed
-    df = run_experiment(random_seed=41, max_steps=100, save_data=True)
+    # Run test with a specific random seed and visualization
+    # First, just create a static visualization of the initial environment to verify functionality
+    agent, env, grid_locations, actions, agent_pos, goal_location, _ = initialize_experiment(random_seed=3)
+    print("\nCreating static visualization of the initial environment...")
+    visualize_gridworld(
+        agent_pos=agent_pos,
+        redspots=env.redspots,
+        goal_pos=goal_location,
+        title="Initial Environment State",
+        save_path="initial_environment.png",
+        show=True
+    )
+    
+    # After verifying static visualization works, run the full experiment
+    print("\nRunning full experiment with visualization at each step...")
+    df = run_experiment(random_seed=3, max_steps=100, save_data=True, visualize=True)
     print("\nExperiment complete. Summary statistics:")
     print(df.describe())
+    
+    print("\nTo create an animation from the visualizations, you can use the following command:")
+    print("ffmpeg -framerate 1 -pattern_type glob -i 'gridworld_vis_*/*.png' -c:v libx264 -pix_fmt yuv420p gridworld_animation.mp4")
+    
+    # You can also view the grid structure with a simple visualization
+    agent, env, grid_locations, actions, agent_pos, goal_location, _ = initialize_experiment(random_seed=3)
+    print("\nCreating static visualization of the initial environment...")
+    visualize_gridworld(
+        agent_pos=agent_pos,
+        redspots=env.redspots,
+        goal_pos=goal_location,
+        title="Initial Environment State",
+        save_path="initial_environment.png"
+    )

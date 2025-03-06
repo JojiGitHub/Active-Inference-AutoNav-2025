@@ -8,32 +8,6 @@ from gym import spaces
 import sys
 import os
 
-# Add CoppeliaSim directory to path to import the module
-sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'CoppeliaSim'))
-try:
-    # Import directly from the coppeliasim_zmqremoteapi_client like in ActInfAgent
-    from coppeliasim_zmqremoteapi_client import RemoteAPIClient
-    # Create a client and get the sim object
-    client = RemoteAPIClient()
-    sim = client.getObject('sim')
-    print("Successfully connected to CoppeliaSim Remote API")
-except ImportError:
-    print("Failed to import coppeliasim_zmqremoteapi_client. Make sure the CoppeliaSim Remote API client is properly installed.")
-    print("You may need to install it with: pip install coppeliasim-zmqremoteapi-client")
-    try:
-        from CoppeliaSim.coppeliasim import sim
-        print("Warning: Using fallback CoppeliaSim module.")
-    except ImportError:
-        print("Warning: CoppeliaSim module not found. Simulator functionality may be limited.")
-        # Create a dummy sim object for testing without CoppeliaSim
-        class DummySim:
-            def __getattr__(self, name):
-                def dummy_method(*args, **kwargs):
-                    print(f"Dummy sim.{name} called with args: {args}, kwargs: {kwargs}")
-                    return -1
-                return dummy_method
-        sim = DummySim()
-
 # Define constants for actions
 UP = 0
 DOWN = 1
@@ -49,6 +23,17 @@ ACTION_NAMES = {
     RIGHT: "RIGHT",
     STAY: "STAY"
 }
+
+# Create a dummy sim class for use when CoppeliaSim is not needed
+class DummySim:
+    def __getattr__(self, name):
+        def dummy_method(*args, **kwargs):
+            # Silently ignore calls to avoid too much logging noise
+            return -1
+        return dummy_method
+
+# Default to dummy simulator
+sim = DummySim()
 
 class GridWorldEnv:
     """
@@ -75,7 +60,13 @@ class GridWorldEnv:
         self.total_steps = 0
         self.vision_distance = 2  # How far the agent can see (radius)
         self.use_coppeliasim = use_coppeliasim
-        self.simulation_mode = not use_coppeliasim
+        
+        # Set simulation_mode to True by default, will be updated if CoppeliaSim connection is successful
+        self.simulation_mode = True
+        
+        # Only try to connect to CoppeliaSim if explicitly enabled
+        if self.use_coppeliasim:
+            self._initialize_coppeliasim()
         
         # Path following parameters
         self.velocity = 0.08  # Default velocity for path following
@@ -92,33 +83,9 @@ class GridWorldEnv:
             dtype=np.float32
         )
         
-        # Stop any running simulation first
-        if self.use_coppeliasim:
-            try:
-                # First try to stop the simulation if it's running
-                sim_state = sim.getSimulationState()
-                if sim_state != sim.simulation_stopped:
-                    print("Stopping existing simulation...")
-                    sim.stopSimulation()
-                    time.sleep(1.0)  # Wait for simulation to fully stop
-                
-                # Clear any existing environment
-                print("Clearing existing environment...")
-                self.clear_environment()
-            except Exception as e:
-                print(f"Warning during environment cleanup: {e}")
-        
         # Initialize environment (CoppeliaSim or Grid-only)
         try:
-            if self.use_coppeliasim:
-                # Start simulation if using CoppeliaSim
-                try:
-                    print("Starting new CoppeliaSim simulation...")
-                    sim.startSimulation()
-                except Exception as e:
-                    print(f"Warning: Could not start simulation: {e}")
-                    self.simulation_mode = True
-                    
+            if self.use_coppeliasim and not self.simulation_mode:
                 self.initialize_coppelia_environment(random_seed)
             else:
                 self.initialize_grid_environment(random_seed)
@@ -129,6 +96,62 @@ class GridWorldEnv:
             self.simulation_mode = True
             self.initialize_grid_environment(random_seed)
     
+    def _initialize_coppeliasim(self):
+        """Initialize connection to CoppeliaSim if needed"""
+        global sim
+        
+        try:
+            # Add CoppeliaSim directory to path to import the module
+            sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'CoppeliaSim'))
+            
+            # Import directly from the coppeliasim_zmqremoteapi_client
+            from coppeliasim_zmqremoteapi_client import RemoteAPIClient
+            
+            # Create a client and get the sim object
+            client = RemoteAPIClient()
+            sim = client.getObject('sim')
+            print("Successfully connected to CoppeliaSim Remote API")
+            
+            # Stop any running simulation first
+            try:
+                sim_state = sim.getSimulationState()
+                if (sim_state != sim.simulation_stopped):
+                    print("Stopping existing simulation...")
+                    sim.stopSimulation()
+                    time.sleep(1.0)  # Wait for simulation to fully stop
+                
+                # Clear any existing environment
+                print("Clearing existing environment...")
+                self.clear_environment()
+                
+                # Start simulation
+                print("Starting new CoppeliaSim simulation...")
+                sim.startSimulation()
+                
+                # Set simulation_mode to False since we successfully connected
+                self.simulation_mode = False
+                
+            except Exception as e:
+                print(f"Warning during CoppeliaSim setup: {e}")
+                self.simulation_mode = True
+                
+        except ImportError:
+            print("Failed to import coppeliasim_zmqremoteapi_client. Make sure the CoppeliaSim Remote API client is properly installed.")
+            print("You may need to install it with: pip install coppeliasim-zmqremoteapi-client")
+            
+            try:
+                from CoppeliaSim.coppeliasim import sim
+                print("Warning: Using fallback CoppeliaSim module.")
+                self.simulation_mode = False
+            except ImportError:
+                print("Warning: CoppeliaSim module not found. Using grid-only mode.")
+                sim = DummySim()
+                self.simulation_mode = True
+        except Exception as e:
+            print(f"Error connecting to CoppeliaSim: {e}")
+            sim = DummySim()
+            self.simulation_mode = True
+
     def initialize_grid_environment(self, random_seed):
         """Initialize grid environment with obstacles, goal, and agent"""
         # Create random obstacles (red zones)
@@ -410,6 +433,41 @@ class GridWorldEnv:
         # Combine visible colors and coordinate information
         return visible_colors + coordinates_info
     
+    def calculate_obstacle_proximity(self):
+        """
+        Calculate a measure of how close the agent is to obstacles.
+        Returns:
+            float: A value between 0 (far from obstacles) and 1 (very close to obstacles)
+        """
+        agent_x, agent_y = self.current_location
+        min_distance = float('inf')
+        
+        # Look at obstacles in a larger area (8x8) around the agent
+        for dx in range(-4, 5):  # -4 to 4
+            for dy in range(-4, 5):  # -4 to 4
+                x_pos = agent_x + dx
+                y_pos = agent_y + dy
+                
+                # Skip if position is out of bounds
+                if (x_pos < 0 or x_pos >= self.grid_dimensions[0] or
+                    y_pos < 0 or y_pos >= self.grid_dimensions[1]):
+                    continue
+                
+                # Check if this position is an obstacle
+                if (x_pos, y_pos) in self.redspots:
+                    # Calculate Manhattan distance
+                    distance = abs(dx) + abs(dy)
+                    min_distance = min(min_distance, distance)
+        
+        # If no obstacles are found nearby, return 0
+        if min_distance == float('inf'):
+            return 0.0
+        
+        # Convert distance to proximity (closer = higher value)
+        # 0 cells away = 1.0, 1 cell away = 0.8, 2 cells away = 0.6, etc.
+        proximity = max(0.0, 1.0 - (min_distance * 0.2))
+        return proximity
+    
     def step(self, action):
         """
         Execute one step in the environment
@@ -516,7 +574,10 @@ class GridWorldEnv:
                     print(f"Warning: Simulation step failed: {e}")
                     self.simulation_mode = True
             
-            # ULTRA SIMPLE REWARD FUNCTION
+            # Calculate obstacle proximity for reward shaping
+            obstacle_proximity = self.calculate_obstacle_proximity()
+            
+            # IMPROVED REWARD FUNCTION
             reward = 0.0
             done = False
             
@@ -526,22 +587,34 @@ class GridWorldEnv:
                 done = True
                 print("Goal reached!")
             
-            # Obstacle hit - episode ends
+            # Obstacle hit - episode ends with highly negative reward
             elif new_position in self.redspots:
-                reward = -1.0  # Fixed negative reward
+                reward = -20.0  # Significantly increased negative reward from -10.0 to -20.0
                 done = True
                 print("Hit obstacle!")
             
-            # Simple direction-based reward
+            # Enhanced reward system with obstacle avoidance
             else:
-                # Positive reward only when moving closer to the goal
+                # Base reward for moving toward/away from goal
                 if new_manhattan < old_manhattan:
-                    reward = 0.1  # Small positive reward
-                # Negative reward for moving away or hitting walls
+                    reward = 0.1  # Small positive reward for moving closer to goal
                 elif new_manhattan > old_manhattan:
-                    reward = -0.1  # Small negative reward
+                    reward = -0.1  # Small negative reward for moving away from goal
                 else:
                     reward = -0.05  # Smaller negative reward for no progress
+                
+                # Add obstacle avoidance reward component
+                # Penalize being close to obstacles proportionally to proximity
+                obstacle_penalty = -obstacle_proximity * 0.3
+                reward += obstacle_penalty
+                
+                # Hitting walls (boundaries) incurs a small penalty
+                if ((action == UP and self.y == 0) or 
+                    (action == DOWN and self.y == self.grid_dimensions[1] - 1) or
+                    (action == LEFT and self.x == 0) or
+                    (action == RIGHT and self.x == self.grid_dimensions[0] - 1)):
+                    reward -= 0.2
+                    print("Hit wall!")
             
             # Time limit reached
             if self.total_steps >= self.max_steps:
@@ -553,7 +626,8 @@ class GridWorldEnv:
             info = {
                 'manhattan_distance': new_manhattan,
                 'action_name': ACTION_NAMES.get(action, "UNKNOWN"),
-                'manhattan_improvement': old_manhattan - new_manhattan
+                'manhattan_improvement': old_manhattan - new_manhattan,
+                'obstacle_proximity': obstacle_proximity
             }
             
             return np.array(state, dtype=np.float32), reward, done, info
@@ -565,7 +639,7 @@ class GridWorldEnv:
                 np.zeros(29, dtype=np.float32),
                 -0.1,
                 True,
-                {'manhattan_distance': 999, 'action_name': 'ERROR', 'manhattan_improvement': 0}
+                {'manhattan_distance': 999, 'action_name': 'ERROR', 'manhattan_improvement': 0, 'obstacle_proximity': 0}
             )
     
     def reset(self):
@@ -606,7 +680,7 @@ class GridWorldEnv:
                         try:
                             # Stop the simulation if it's running
                             sim_state = sim.getSimulationState()
-                            if sim_state != sim.simulation_stopped:
+                            if (sim_state != sim.simulation_stopped):
                                 sim.stopSimulation()
                                 time.sleep(0.5)  # Give it time to stop
                             
@@ -872,7 +946,7 @@ class GridWorldEnv:
         if valid_position:
             try:
                 bubbleRob_handle = sim.getObject('/bubbleRob')
-                if bubbleRob_handle != -1:
+                if (bubbleRob_handle != -1):
                     sim.setObjectPosition(bubbleRob_handle, -1, [x, y, 0.12])
                     bubbleRob_position = (x, y, 0.12)
                     print(f"Placed bubbleRob at position [{x}, {y}, 0.12]")

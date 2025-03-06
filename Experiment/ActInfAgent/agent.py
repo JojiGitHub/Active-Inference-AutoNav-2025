@@ -131,26 +131,94 @@ def create_prior_beliefs(grid_locations, agent_pos, num_states):
     D[1] = np.ones(num_states[1]) / num_states[1]
     return D
 
+def visualize_vision_matrix(vision_matrix, grid_dims=(40,40)):
+    """
+    Visualizes the observation matrix as three separate heatmaps, one for each attribute
+    (SAFE, DANGER, REWARDING)
+    
+    Args:
+        vision_matrix: numpy array of shape (num_locations, num_attributes)
+        grid_dims: list of [height, width] of the grid
+    """
+    # Create figure with three subplots
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    
+    # Labels for each subplot
+    titles = ['SAFE', 'DANGER', 'REWARDING']
+    
+    for idx, title in enumerate(titles):
+        # Reshape the matrix to match grid dimensions
+        heatmap_data = vision_matrix[:, idx].reshape(grid_dims[0], grid_dims[1])
+        
+        # Plot heatmap
+        sns.heatmap(heatmap_data, 
+                   ax=axes[idx], 
+                   cmap='YlOrRd',
+                   vmin=0, 
+                   vmax=1,
+                   annot=True,
+                   fmt='.2f')
+        
+        axes[idx].set_title(f'{title} Probability')
+        axes[idx].set_xlabel('Y coordinate')
+        axes[idx].set_ylabel('X coordinate')
+    
+    plt.tight_layout()
+    plt.show()
+
 def create_redspot_agent(agent_pos, goal_location, grid_dims=[40, 40], policy_len=3):
     """Create and initialize a complete Active Inference agent"""
+    global vision_matrix
+    
+    # Initialize grid world
     grid_locations, grid_dims = initialize_grid(grid_dims)
+    
+    # Initialize state space
     current_attribute, current_color, num_states, num_obs = initialize_state_space(grid_locations)
+    
+    # Initialize vision matrix globally
     vision_matrix = create_vision_matrix(num_states)
+    
+    # Create likelihood matrices (A)
     A = create_likelihood_matrices(grid_locations, num_states, num_obs, current_attribute)
+    
+    # Create transition matrices (B)
     B, actions = create_transition_matrices(grid_locations, grid_dims, num_states)
+    
+    # Create preference matrices (C)
     C = create_preference_matrices(grid_locations, goal_location, num_obs)
+    
+    # Create prior beliefs (D)
     D = create_prior_beliefs(grid_locations, agent_pos, num_states)
     
-    # Create a closure around get_expected_states that includes vision_matrix
-    def wrapped_get_expected_states(qs, B, policy):
-        return custom_get_expected_states(qs, B, policy, vision_matrix)
+    # Define a wrapper function that uses module-level vision_matrix
+    def get_expected_states_wrapper(qs, B, policy):
+
+        print('vison achieved')
+        # visualize_vision_matrix(vision_matrix)
+
+
+        from sys import modules
+        current_module = modules[__name__]
+        n_steps = policy.shape[0]
+        n_factors = policy.shape[1]
+        qs_pi = [qs] + [utils.obj_array(n_factors) for t in range(n_steps)]
+        
+        for t in range(n_steps):
+            for control_factor, action in enumerate(policy[t,:]):
+                qs_pi[t+1][control_factor] = B[control_factor][:,:,int(action)].dot(qs_pi[t][control_factor])
+                # Only update vision for location changes (control_factor 0)
+                if control_factor == 0:
+                    max_loc = qs_pi[t+1][0].argmax()
+                    qs_pi[t+1][1] = current_module.vision_matrix[max_loc]
+        
+        return qs_pi[1:]
     
-    # Override get_expected_states with our wrapped version
-    control.get_expected_states = wrapped_get_expected_states
+    # Override the control module's function
+    control.get_expected_states = get_expected_states_wrapper
     
-    # Create the agent
-    agent = Agent(A=A, B=B, C=C, D=D, policy_len=policy_len)
-    agent.vision_matrix = vision_matrix  # Store vision matrix in agent for updates
+    # Initialize Active Inference agent
+    agent = Agent(A=A, B=B, C=C, D=D, control_fac_idx=[0], policy_len=policy_len)
     
     return agent, grid_locations, actions
 

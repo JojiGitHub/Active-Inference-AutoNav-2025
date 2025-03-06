@@ -14,54 +14,69 @@ os.makedirs("models", exist_ok=True)
 TRAINING_CONFIG = {
     'state_dim': 29,           # 25 vision cells + agent_x, agent_y + goal_x, goal_y
     'action_dim': 5,           # UP, DOWN, LEFT, RIGHT, STAY
-    'batch_size': 64,          # Batch size for updates
-    'buffer_size': 100000,     # Larger buffer to store diverse experiences
-    'learning_rate': 0.0005,   # Reduced learning rate (was 0.005)
+    'batch_size': 128,         # Increased batch size for better generalization
+    'buffer_size': 500000,     # Much larger buffer for more diverse experiences
+    'learning_rate': 0.0003,   # Further reduced learning rate for better stability
     'gamma': 0.99,
-    'num_episodes': 2000,     # Keep high episode count
-    'eval_interval': 200,      # Less frequent evaluation to save time
-    'max_steps': 75,           # Increased max steps to allow solving larger environments
-    'initial_epsilon': 0.5,    # Start with balanced exploration
+    'num_episodes': 10000,     # More episodes for better training
+    'eval_interval': 250,      # More frequent evaluation
+    'max_steps': 150,          # Increased max steps to allow solving complex environments
+    'initial_epsilon': 0.7,    # Higher initial exploration
     'min_epsilon': 0.05,
     'weight_decay': 1e-5       # L2 regularization
 }
 
-# Expanded training environment configurations with curriculum learning
+# Greatly expanded curriculum with more diverse environments
 CURRICULUM = [
-    # Stage 1: Easy environments (first 5000 episodes)
+    # Stage 1: Easy environments (first 2000 episodes)
     {
-        "grid_sizes": [[8, 8], [10, 10]],
-        "obstacles_range": [(2, 5)],
-        "max_distance_range": [4, 6],
-        "seeds": list(range(1, 101)),  # 100 different seeds
-        "episodes": 5000
+        "grid_sizes": [[8, 8], [10, 10], [12, 12], [15, 15]],
+        "obstacles_range": [(2, 5), (3, 6), (4, 8)],
+        "max_distance_range": [4, 5, 6, 7],
+        "seeds": list(range(1, 501)),  # 500 different seeds
+        "episodes": 2000,
+        "patterns": ["random", "clusters"]  # Start with simpler patterns
     },
-    # Stage 2: Medium environments (next 5000 episodes)
+    # Stage 2: Medium environments (next 3000 episodes)
     {
-        "grid_sizes": [[10, 10], [12, 12], [15, 15]],
-        "obstacles_range": [(5, 8), (8, 12)],
-        "max_distance_range": [5, 7, 9],
-        "seeds": list(range(101, 201)),  # Different 100 seeds
-        "episodes": 5000
+        "grid_sizes": [[12, 12], [15, 15], [18, 18], [20, 20]],
+        "obstacles_range": [(5, 10), (8, 12), (10, 15), (12, 18)],
+        "max_distance_range": [6, 8, 10, 12],
+        "seeds": list(range(501, 1501)),  # 1000 different seeds
+        "episodes": 3000,
+        "patterns": ["random", "clusters", "walls"]  # Add wall patterns
     },
-    # Stage 3: Challenging environments (final 10000 episodes)
+    # Stage 3: Challenging environments (next 3000 episodes)
     {
-        "grid_sizes": [[15, 15], [18, 18], [20, 20]],
-        "obstacles_range": [(10, 15), (15, 20)],
-        "max_distance_range": [8, 10, 12],
-        "seeds": list(range(201, 501)),  # 300 different seeds
-        "episodes": 10000
+        "grid_sizes": [[20, 20], [25, 25], [30, 30]],
+        "obstacles_range": [(15, 20), (20, 25), (25, 30)],
+        "max_distance_range": [10, 12, 15],
+        "seeds": list(range(1501, 2501)),  # 1000 different seeds
+        "episodes": 3000,
+        "patterns": ["random", "clusters", "walls", "maze"]  # All patterns
+    },
+    # Stage 4: Advanced environments (final 2000 episodes)
+    {
+        "grid_sizes": [[25, 25], [30, 30], [35, 35], [40, 40]],
+        "obstacles_range": [(25, 35), (30, 40), (35, 45)],
+        "max_distance_range": [12, 15, 18, 20],
+        "seeds": list(range(2501, 4001)),  # 1500 different seeds
+        "episodes": 2000,
+        "patterns": ["random", "clusters", "walls", "maze"]  # All patterns
     }
 ]
 
-# Test configurations for consistent evaluation
+# More diverse test configurations
 EVAL_CONFIGS = [
     {"grid_size": [10, 10], "obstacles": 5, "max_dist": 5, "name": "Easy"},
     {"grid_size": [15, 15], "obstacles": 10, "max_dist": 8, "name": "Medium"},
-    {"grid_size": [20, 20], "obstacles": 15, "max_dist": 10, "name": "Hard"}
+    {"grid_size": [20, 20], "obstacles": 15, "max_dist": 10, "name": "Hard"},
+    {"grid_size": [25, 25], "obstacles": 25, "max_dist": 12, "name": "VeryHard"},
+    {"grid_size": [30, 30], "obstacles": 35, "max_dist": 15, "name": "Extreme"},
+    {"grid_size": [35, 35], "obstacles": 45, "max_dist": 18, "name": "Ultimate"}
 ]
 
-def create_env_with_close_goal(grid_size, num_obstacles, max_distance=None, seed=None):
+def create_env_with_close_goal(grid_size, num_obstacles, max_distance=None, seed=None, obstacle_pattern="random"):
     """Create environment with goal closer to agent for easier learning"""
     # Convert seed to int if it's not None to avoid TypeError
     if seed is not None:
@@ -76,22 +91,65 @@ def create_env_with_close_goal(grid_size, num_obstacles, max_distance=None, seed
     env = GridWorldEnv(
         random_seed=env_seed,
         grid_dimensions=grid_size,
-        max_steps=TRAINING_CONFIG['max_steps']
+        max_steps=TRAINING_CONFIG['max_steps'],
+        use_coppeliasim=False  # Explicitly disable CoppeliaSim
     )
     
     # Override the default initialization to create an easier environment
     env.redspots = []
     
-    # Place fewer obstacles
-    for _ in range(num_obstacles):
-        while True:
+    # Place obstacles based on the selected pattern
+    if obstacle_pattern == "random":
+        for _ in range(num_obstacles):
+            while True:
+                x = np.random.randint(0, grid_size[0])
+                y = np.random.randint(0, grid_size[1])
+                if (x, y) not in env.redspots and (x, y) != env.init_loc:
+                    env.redspots.append((x, y))
+                    break
+    elif obstacle_pattern == "clusters":
+        cluster_centers = [(np.random.randint(0, grid_size[0]), np.random.randint(0, grid_size[1])) for _ in range(num_obstacles // 3)]
+        for center in cluster_centers:
+            for _ in range(3):
+                while True:
+                    x = center[0] + np.random.randint(-1, 2)
+                    y = center[1] + np.random.randint(-1, 2)
+                    if (x, y) not in env.redspots and (x, y) != env.init_loc and 0 <= x < grid_size[0] and 0 <= y < grid_size[1]:
+                        env.redspots.append((x, y))
+                        break
+    elif obstacle_pattern == "walls":
+        for _ in range(num_obstacles // 5):
+            orientation = np.random.choice(["horizontal", "vertical"])
+            if orientation == "horizontal":
+                x = np.random.randint(0, grid_size[0])
+                y_start = np.random.randint(0, grid_size[1] - 4)
+                for y in range(y_start, y_start + 5):
+                    if (x, y) not in env.redspots and (x, y) != env.init_loc:
+                        env.redspots.append((x, y))
+            else:
+                y = np.random.randint(0, grid_size[1])
+                x_start = np.random.randint(0, grid_size[0] - 4)
+                for x in range(x_start, x_start + 5):
+                    if (x, y) not in env.redspots and (x, y) != env.init_loc:
+                        env.redspots.append((x, y))
+    elif obstacle_pattern == "maze":
+        for _ in range(num_obstacles // 2):
             x = np.random.randint(0, grid_size[0])
             y = np.random.randint(0, grid_size[1])
-            # Make sure we're not placing obstacles in the middle area
-            if (x, y) not in env.redspots and (x < grid_size[0]//4 or x > 3*grid_size[0]//4 or 
-                y < grid_size[1]//4 or y > 3*grid_size[1]//4):
+            if (x, y) not in env.redspots and (x, y) != env.init_loc:
                 env.redspots.append((x, y))
-                break
+                for _ in range(3):
+                    direction = np.random.choice(["up", "down", "left", "right"])
+                    if direction == "up" and x > 0:
+                        x -= 1
+                    elif direction == "down" and x < grid_size[0] - 1:
+                        x += 1
+                    elif direction == "left" and y > 0:
+                        y -= 1
+                    elif direction == "right" and y < grid_size[1] - 1:
+                        y += 1
+                    if (x, y) not in env.redspots and (x, y) != env.init_loc:
+                        env.redspots.append((x, y))
     
     # Place agent first
     agent_x = np.random.randint(grid_size[0]//4, 3*grid_size[0]//4)
@@ -199,7 +257,7 @@ def get_curriculum_config(episode):
     return CURRICULUM[-1]  # Default to the final stage
 
 def main():
-    print("=== Starting Curriculum RL Training for Grid World ===")
+    print("=== Starting Enhanced Curriculum RL Training for Grid World ===")
     
     # Set random seeds for reproducibility
     np.random.seed(42)
@@ -214,7 +272,7 @@ def main():
         initial_epsilon=TRAINING_CONFIG['initial_epsilon']
     )
     
-    # Replay buffer with capacity
+    # Larger replay buffer
     buffer = PrioritizedReplayBuffer(capacity=TRAINING_CONFIG['buffer_size'])
     
     # Progress tracking variables
@@ -222,6 +280,7 @@ def main():
     successes_history = []
     best_success_rate = 0.0
     current_stage = 0
+    last_save_time = time.time()
     
     # Main training loop
     for episode in range(TRAINING_CONFIG['num_episodes']):
@@ -241,18 +300,20 @@ def main():
             }
             save_model(agent, metrics, f"models/stage{current_stage}_model.pth")
         
-        # Create environment based on current curriculum stage
+        # Create environment with random pattern from current stage
         grid_size = random.choice(stage_config["grid_sizes"])
         obstacles_range = random.choice(stage_config["obstacles_range"])
         num_obstacles = random.randint(*obstacles_range)
         max_distance = random.choice(stage_config["max_distance_range"])
         seed = random.choice(stage_config["seeds"])
+        pattern = random.choice(stage_config["patterns"])
         
         env = create_env_with_close_goal(
             grid_size=grid_size,
             num_obstacles=num_obstacles,
             max_distance=max_distance,
-            seed=seed
+            seed=seed,
+            obstacle_pattern=pattern
         )
         
         # Run episode
@@ -262,12 +323,12 @@ def main():
         reached_goal = False
         steps = 0
         
-        # Adaptive exploration - decrease epsilon faster as training progresses
+        # More gradual epsilon decay
         if episode % 100 == 0 and episode > 0:
             if agent.epsilon > TRAINING_CONFIG['min_epsilon']:
                 agent.epsilon = max(
-                    TRAINING_CONFIG['min_epsilon'], 
-                    agent.epsilon * 0.97  # Slightly slower decay (was 0.95)
+                    TRAINING_CONFIG['min_epsilon'],
+                    agent.epsilon * 0.98  # Even slower decay
                 )
                 print(f"Adjusted epsilon to {agent.epsilon:.3f}")
         
@@ -282,7 +343,10 @@ def main():
             
             # Update agent if enough samples in buffer
             if buffer.position >= TRAINING_CONFIG['batch_size']:
-                agent.update(buffer, TRAINING_CONFIG['batch_size'])
+                # Multiple updates per step for better learning
+                num_updates = 2 if episode > 5000 else 1  # Increase updates in later episodes
+                for _ in range(num_updates):
+                    agent.update(buffer, TRAINING_CONFIG['batch_size'])
             
             state = next_state
             episode_reward += reward
@@ -303,7 +367,7 @@ def main():
             recent_successes = successes_history[-20:]
             success_rate = sum(recent_successes) / len(recent_successes)
             print(f"Episode {episode+1}/{TRAINING_CONFIG['num_episodes']} - "
-                  f"Stage {current_stage+1} - "
+                  f"Stage {current_stage+1} ({pattern}) - "
                   f"Grid {grid_size} - "
                   f"Obstacles {num_obstacles} - "
                   f"Reward: {np.mean(recent_rewards):.2f}, "
@@ -311,10 +375,14 @@ def main():
                   f"Epsilon: {agent.epsilon:.3f}")
         
         # Periodically evaluate and save model
-        if (episode + 1) % TRAINING_CONFIG['eval_interval'] == 0:
-            success_rate, avg_reward, difficulty_results = evaluate_agent(agent, num_episodes=5)
+        current_time = time.time()
+        time_since_last_save = current_time - last_save_time
+        
+        if ((episode + 1) % TRAINING_CONFIG['eval_interval'] == 0) or time_since_last_save >= 1800:  # 30 minutes
+            success_rate, avg_reward, difficulty_results = evaluate_agent(agent, num_episodes=30)
+            last_save_time = current_time
             
-            # Save checkpoint periodically regardless of performance
+            # Save checkpoint periodically
             if (episode + 1) % 1000 == 0:
                 checkpoint_metrics = {
                     'success_rate': success_rate,
@@ -334,21 +402,18 @@ def main():
                     'difficulty_results': difficulty_results
                 }
                 save_model(agent, metrics, "models/best_model.pth")
-                # Also save to root directory
-                save_model(agent, metrics, "best_model.pth")
+                save_model(agent, metrics, "../best_model.pth")  # Also save to root directory
                 print(f"New best model with success rate {success_rate:.2f}")
+
+        # Clean up environment
+        env.close()
     
     # Final evaluation with more episodes
-    final_success_rate, final_avg_reward, final_difficulty_results = evaluate_agent(agent, num_episodes=10)
+    final_success_rate, final_avg_reward, final_difficulty_results = evaluate_agent(agent, num_episodes=50)
     print("\n=== Training Complete ===")
     print(f"Final success rate: {final_success_rate:.2f}")
     print(f"Final average reward: {final_avg_reward:.2f}")
     print(f"Best success rate achieved: {best_success_rate:.2f}")
-    
-    # Detailed difficulty breakdown
-    print("\nPerformance by difficulty:")
-    for name, results in final_difficulty_results.items():
-        print(f"  {name}: {results['success_rate']:.2f} success rate, avg reward: {np.mean(results['rewards']):.2f}")
     
     # Save final model
     final_metrics = {
