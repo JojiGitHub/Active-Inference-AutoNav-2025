@@ -26,6 +26,17 @@ ACTION_NAMES = {
 class Gridworld:
 
     def __init__(self, size=40, mode='random', num_obstacles=20, random_seed=42, max_steps=100, use_coppeliasim=False):
+        # Validate input parameters
+        if size < 5:  # Minimum size requirement
+            print(f"Warning: Grid size {size} is too small. Setting to minimum size of 5")
+            size = 5
+            
+        # Adjust num_obstacles based on grid size to prevent overcrowding
+        max_possible_obstacles = (size - 2) * (size - 2) // 4  # Leave room for movement
+        if num_obstacles > max_possible_obstacles:
+            print(f"Warning: Too many obstacles ({num_obstacles}) for grid size {size}. Reducing to {max_possible_obstacles}")
+            num_obstacles = max_possible_obstacles
+
         # Set random seed for reproducibility
         random.seed(random_seed)
         np.random.seed(random_seed)
@@ -36,12 +47,9 @@ class Gridworld:
         self.num_obstacles = num_obstacles
         self.max_steps = max_steps
         self.total_steps = 0
-        self.use_coppeliasim = use_coppeliasim
+        self.random_seed = random_seed
+        self.use_coppeliasim = False  # Always set to False to disable CoppeliaSim
 
-        # Initialize CoppeliaSim if needed
-        if self.use_coppeliasim:
-            self.initialize_coppeliasim()
-        
         # Create the board
         self.board = GridBoard(size=size)
         
@@ -103,62 +111,6 @@ class Gridworld:
             
         # Add the mask to the board
         self.board.addMask('obstacles', obstacle_mask, '-')
-    
-    def initialize_coppeliasim(self):
-        """Initialize the CoppeliaSim environment if use_coppeliasim is True"""
-        try:
-            # Import necessary modules for CoppeliaSim
-            from coppeliasim_zmqremoteapi_client import RemoteAPIClient
-            
-            # Connect to CoppeliaSim
-            self.client = RemoteAPIClient()
-            self.sim = self.client.getObject('sim')
-            
-            # Clear existing environment in CoppeliaSim
-            self.clear_coppeliasim_environment()
-            
-            print("CoppeliaSim connection established successfully")
-        except Exception as e:
-            print(f"Error initializing CoppeliaSim: {e}")
-            self.use_coppeliasim = False
-    
-    def clear_coppeliasim_environment(self):
-        """Clear all objects from the CoppeliaSim environment"""
-        if not self.use_coppeliasim:
-            return
-        
-        try:
-            # Try to get all obstacle handles
-            obstacle_handles = []
-            goal_handle = None
-            
-            # Try to remove obstacles by name
-            for i in range(self.num_obstacles):
-                try:
-                    object_handle = self.sim.getObject(f'/Obstacle{i}')
-                    if object_handle != -1:
-                        obstacle_handles.append(object_handle)
-                except:
-                    pass
-            
-            # Try to get goal handle
-            try:
-                goal_handle = self.sim.getObject('/Goal_Loc')
-            except:
-                pass
-            
-            # Remove all obstacles
-            for handle in obstacle_handles:
-                if self.sim.isHandle(handle):
-                    self.sim.removeObject(handle)
-            
-            # Remove goal
-            if goal_handle and self.sim.isHandle(goal_handle):
-                self.sim.removeObject(goal_handle)
-                
-            print("CoppeliaSim environment cleared")
-        except Exception as e:
-            print(f"Error clearing CoppeliaSim environment: {e}")
         
     def reset(self):
         """Reset the environment to an initial state and return the initial observation"""
@@ -169,8 +121,8 @@ class Gridworld:
         
         # Generate additional obstacles based on mode
         if self.mode == 'random':
-            # Add random obstacles
-            self.board.generate_obstacles(num_obstacles=self.num_obstacles)
+            # Add random obstacles using the specified method
+            self.generate_reproducible_obstacles(self.random_seed)
         elif self.mode == 'static':
             # Use predefined obstacle pattern for static mode
             self.initGridStatic()
@@ -186,7 +138,7 @@ class Gridworld:
         else:
             # Default to random if mode is not recognized
             print(f"Warning: Environment mode '{self.mode}' not recognized. Using 'random'.")
-            self.board.generate_obstacles(num_obstacles=self.num_obstacles)
+            self.generate_reproducible_obstacles(self.random_seed)
         
         # Place goal in random position (not on obstacles)
         self.goal_position = self.board.place_goal_random()
@@ -197,150 +149,91 @@ class Gridworld:
         # Store current position for easier access
         self.x, self.y = self.player_position
         
-        # If using CoppeliaSim, update the environment there too
-        if self.use_coppeliasim:
-            self.update_coppeliasim_environment()
-        
         # Get observation
         observation = self.get_observation()
         
         return np.array(observation, dtype=np.float32)
+    
+    def create_bounding_locations(self, position, dimensions):
+        """
+        Creates bounding locations for an object.
+        
+        Parameters:
+        -----------
+        position : tuple (x, y)
+            Center position of the object
+        dimensions : tuple (a, b)
+            Dimensions of the object (width, depth)
+            
+        Returns:
+        --------
+        tuple
+            Eight points: (top_right, bottom_left, top_left, bottom_right, mid_top, mid_bottom, mid_left, mid_right)
+        """
+        (x, y) = position
+        (a, b) = dimensions
+
+        # Bounding locations
+        top_right = (x + a/2, y + b/2)
+        bottom_left = (x - a/2, y - b/2)
+        top_left = (x - a/2, y + b/2)
+        bottom_right = (x + a/2, y - b/2)
+
+        # Midpoints
+        mid_top = ((top_right[0] + top_left[0]) / 2, (top_right[1] + top_left[1]) / 2)
+        mid_bottom = ((bottom_right[0] + bottom_left[0]) / 2, (bottom_right[1] + bottom_left[1]) / 2)
+        mid_left = ((top_left[0] + bottom_left[0]) / 2, (top_left[1] + bottom_left[1]) / 2)
+        mid_right = ((top_right[0] + bottom_right[0]) / 2, (top_right[1] + bottom_right[1]) / 2)
+        
+        return top_right, bottom_left, top_left, bottom_right, mid_top, mid_bottom, mid_left, mid_right
+    
+    def generate_reproducible_obstacles(self, seed):
+        """Generate obstacles in reproducible positions based on a seed"""
+        random.seed(seed)
+        
+        # Clear existing obstacles (except borders)
+        self.board.obstacle_positions = []
+        self.board.redspots = []
+        
+        # Add border walls first
+        self.add_border_walls()
+        
+        # Calculate valid ranges for obstacle placement
+        min_grid_x = 2  # Keep minimum distance from left border
+        max_grid_x = self.size - 3  # Keep minimum distance from right border
+        min_grid_y = 2  # Keep minimum distance from top border
+        max_grid_y = self.size - 3  # Keep minimum distance from bottom border
+        
+        # Check if we have valid ranges
+        if max_grid_x <= min_grid_x or max_grid_y <= min_grid_y:
+            print(f"Warning: Grid size {self.size} is too small for additional obstacles")
+            return
+            
+        # Calculate available positions
+        valid_positions = []
+        for x in range(min_grid_x, max_grid_x + 1):
+            for y in range(min_grid_y, max_grid_y + 1):
+                valid_positions.append((x, y))
+                
+        # Shuffle positions and select obstacles
+        random.shuffle(valid_positions)
+        num_obstacles_to_place = min(self.num_obstacles, len(valid_positions))
+        
+        # Place obstacles
+        for i in range(num_obstacles_to_place):
+            pos = valid_positions[i]
+            if (pos not in self.board.obstacle_positions and 
+                ('Player' not in self.board.components or pos != self.board.components['Player'].pos) and
+                ('Goal' not in self.board.components or pos != self.board.components['Goal'].pos)):
+                self.board.obstacle_positions.append(pos)
+                self.board.redspots.append(pos)
+        
+        # Update the obstacle mask
+        self.update_obstacle_mask()
 
     def get_observation(self):
         """Get a state representation compatible with env.py"""
         return self.board.get_observation()
-
-    def update_coppeliasim_environment(self):
-        """Update the CoppeliaSim environment to match the current state"""
-        if not self.use_coppeliasim:
-            return
-        
-        try:
-            # Clear existing environment
-            self.clear_coppeliasim_environment()
-            
-            # Create obstacles in CoppeliaSim
-            obstacle_handles = []
-            for i, obstacle_pos in enumerate(self.board.obstacle_positions):
-                if obstacle_pos not in self.board.border_positions:  # Skip border walls if tracked separately
-                    x, y = obstacle_pos
-                    # Convert grid coordinates to CoppeliaSim coordinates
-                    x_sim = (x * 0.125) - 2.5
-                    y_sim = (y * 0.125) - 2.5
-                    
-                    # Create obstacle cuboid
-                    obstacle = self.create_cuboid(
-                        dimensions=[0.125, 0.125, 0.05],  # Small cube size
-                        position=[x_sim, y_sim, 0.025],   # z is half height
-                        color=[1, 0, 0],                 # Red for obstacles
-                        name=f"Obstacle{i}"
-                    )
-                    obstacle_handles.append(obstacle)
-            
-            # Create goal in CoppeliaSim
-            if self.goal_position:
-                x, y = self.goal_position
-                # Convert grid coordinates to CoppeliaSim coordinates
-                x_sim = (x * 0.125) - 2.5
-                y_sim = (y * 0.125) - 2.5
-                
-                # Create goal cuboid
-                self.create_cuboid(
-                    dimensions=[0.125, 0.125, 0.01],  # Flat rectangle
-                    position=[x_sim, y_sim, 0.005],   # z is half height
-                    color=[0, 1, 0],                  # Green for goal
-                    name="Goal_Loc"
-                )
-            
-            # Place or move agent (bubbleRob) in CoppeliaSim
-            x, y = self.player_position
-            # Convert grid coordinates to CoppeliaSim coordinates
-            x_sim = (x * 0.125) - 2.5
-            y_sim = (y * 0.125) - 2.5
-            
-            try:
-                # Check if bubbleRob exists
-                bubbleRob_handle = self.sim.getObject('/bubbleRob')
-                if bubbleRob_handle != -1:  # -1 means object not found
-                    # Set bubbleRob position (z=0.12 as in the original code)
-                    self.sim.setObjectPosition(bubbleRob_handle, -1, [x_sim, y_sim, 0.12])
-                    print(f"Moved bubbleRob to position [{x_sim}, {y_sim}, 0.12]")
-            except Exception as e:
-                print(f"Error positioning bubbleRob: {e}")
-            
-            print("CoppeliaSim environment updated")
-        except Exception as e:
-            print(f"Error updating CoppeliaSim environment: {e}")
-    
-    def create_cuboid(self, dimensions, position, orientation=None, color=None, mass=0, respondable=False, name="cuboid"):
-        """
-        Create a cuboid in CoppeliaSim with customizable properties using the ZMQ Remote API.
-        
-        Parameters:
-        -----------
-        dimensions : list/tuple
-            [x, y, z] dimensions of the cuboid in meters
-        position : list/tuple
-            [x, y, z] position coordinates of the cuboid
-        orientation : list/tuple, optional
-            [alpha, beta, gamma] orientation in Euler angles (radians)
-        color : list/tuple, optional
-            [r, g, b] color components (0-1 range)
-        mass : float, optional
-            Mass of the cuboid in kg (0 = static object)
-        respondable : bool, optional
-            Whether the cuboid should be respondable (participate in dynamics)
-        name : str, optional
-            Name of the cuboid object
-            
-        Returns:
-        --------
-        int
-            Handle to the created cuboid object
-        """
-        if not self.use_coppeliasim:
-            return None
-            
-        # Default orientation if none specified
-        if orientation is None:
-            orientation = [0, 0, 0]
-        
-        # Set the options flag based on parameters
-        options = 0
-        if respondable:
-            options = options | 8  # bit 3 (8) = respondable
-        
-        try:
-            # Create the cuboid primitive
-            cuboid_handle = self.sim.createPrimitiveShape(
-                self.sim.primitiveshape_cuboid,  # shape type
-                dimensions,  # size parameters [x, y, z]
-                options  # options
-            )
-            
-            # Set object name
-            self.sim.setObjectAlias(cuboid_handle, name)
-            
-            # Set position
-            self.sim.setObjectPosition(cuboid_handle, -1, position)
-            
-            # Set orientation
-            self.sim.setObjectOrientation(cuboid_handle, -1, orientation)
-            
-            # Set mass if it's a dynamic object
-            if mass > 0:
-                self.sim.setShapeMass(cuboid_handle, mass)
-            
-            # Set color if specified
-            if color is not None:
-                # In the new API, we can set the color directly on the shape
-                self.sim.setShapeColor(cuboid_handle, None, 0, color)  # 0 = ambient/diffuse color component
-            
-            return cuboid_handle
-            
-        except Exception as e:
-            print(f"Error creating cuboid in CoppeliaSim: {e}")
-            return None
 
     def generate_clustered_obstacles(self):
         """Generate clustered obstacle patterns"""
@@ -509,10 +402,6 @@ class Gridworld:
         new_position = (self.x, self.y)
         new_manhattan = abs(new_position[0] - self.goal_position[0]) + abs(new_position[1] - self.goal_position[1])
         
-        # Update CoppeliaSim if enabled
-        if self.use_coppeliasim:
-            self.update_agent_position_in_coppeliasim()
-        
         # Calculate reward based on new position, obstacles, goal, and manhattan distance change
         manhattan_improvement = old_manhattan - new_manhattan
         reward = self.reward(manhattan_improvement)
@@ -533,24 +422,6 @@ class Gridworld:
         }
         
         return np.array(observation, dtype=np.float32), reward, done, info
-    
-    def update_agent_position_in_coppeliasim(self):
-        """Update the agent's position in CoppeliaSim"""
-        if not self.use_coppeliasim:
-            return
-        
-        try:
-            # Convert grid coordinates to CoppeliaSim coordinates
-            x_sim = (self.x * 0.125) - 2.5
-            y_sim = (self.y * 0.125) - 2.5
-            
-            # Get bubbleRob handle
-            bubbleRob_handle = self.sim.getObject('/bubbleRob')
-            if bubbleRob_handle != -1:
-                # Set new position
-                self.sim.setObjectPosition(bubbleRob_handle, -1, [x_sim, y_sim, 0.12])
-        except Exception as e:
-            print(f"Error updating agent position in CoppeliaSim: {e}")
 
     def makeMove(self, action):
         """
@@ -624,14 +495,6 @@ class Gridworld:
     def close(self):
         """Close the environment and clean up resources"""
         plt.close('all')  # Close any open matplotlib figures
-        
-        # Clean up CoppeliaSim resources if used
-        if self.use_coppeliasim:
-            try:
-                self.clear_coppeliasim_environment()
-                print("CoppeliaSim environment resources cleaned up")
-            except Exception as e:
-                print(f"Error cleaning up CoppeliaSim resources: {e}")
                 
     def visualize_steps(self, num_steps=10, render_every=1, action_selector=None):
         """
@@ -676,11 +539,6 @@ class Gridworld:
                 print(f"Manhattan distance: {info['manhattan_distance']}")
                 self.render()
                 
-                # If using CoppeliaSim, pause briefly to see the movement
-                if self.use_coppeliasim:
-                    import time
-                    time.sleep(0.5)
-            
             # Break if done
             if done:
                 print(f"\nEnvironment finished after {steps_taken} steps")
