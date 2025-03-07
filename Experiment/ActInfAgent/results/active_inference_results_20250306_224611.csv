@@ -1,0 +1,2 @@
+agent_type,random_seed,total_timesteps,total_distance,goal_reached,unique_locations,revisited_locations,action_entropy,grid_dims
+ActiveInference,unknown,6,6,1,7,0,0.9182958340544896,40x40
