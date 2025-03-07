@@ -57,11 +57,11 @@ def evaluate_episode(agent, env, max_steps=100, render=False, step_delay=0.0):
         
         # Add delay before step to slow down the simulation
         if step_delay > 0:
-            print(f"Waiting {step_delay} seconds before next step...")
             time.sleep(step_delay)
             
         next_state, reward, done, info = env.step(action)
         state = next_state
+        total_reward += reward
         total_reward += reward
         steps += 1
         
@@ -411,3 +411,145 @@ if __name__ == "__main__":
         render_visualization=RENDER,
         sim_speed=SIM_SPEED
     )
+
+import torch
+import numpy as np
+from agent import ImprovedDQNAgent, device
+from env import GridWorldEnv
+
+# Configure test settings
+TEST_CONFIG = {
+    'state_dim': 29,           # 25 vision cells + agent_x, agent_y + goal_x, goal_y
+    'action_dim': 5,           # UP, DOWN, LEFT, RIGHT, STAY
+    'grid_size': [20, 20],     # Default grid size
+    'num_obstacles': 10,       # Default number of obstacles
+    'max_steps': 150,          # Maximum steps per episode
+    'num_episodes': 10,        # Number of test episodes
+    'model_path': 'models/best_model.pth',  # Path to best model
+    'use_coppeliasim': False   # Set to True to visualize in CoppeliaSim
+}
+
+def load_model(model_path):
+    """Load the trained agent"""
+    agent = ImprovedDQNAgent(
+        state_dim=TEST_CONFIG['state_dim'],
+        action_dim=TEST_CONFIG['action_dim']
+    )
+    
+    print(f"Loading model from {model_path} to device: {device}")
+    
+    try:
+        # Try to load with map_location to handle models saved on different devices
+        checkpoint = torch.load(model_path, map_location=device)
+        agent.q_network.load_state_dict(checkpoint['q_network_state'])
+        agent.target_network.load_state_dict(checkpoint['target_network_state'])
+        
+        # Print model metrics if available
+        if 'metrics' in checkpoint:
+            metrics = checkpoint['metrics']
+            print(f"Model metrics:")
+            for key, value in metrics.items():
+                if key != 'difficulty_results':
+                    print(f"  {key}: {value}")
+            
+            if 'difficulty_results' in metrics:
+                print("  Performance by difficulty:")
+                for diff, results in metrics['difficulty_results'].items():
+                    if 'success_rate' in results:
+                        print(f"    {diff}: Success rate = {results['success_rate']:.2f}")
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        return None
+    
+    return agent
+
+def test_agent():
+    """Test the trained agent on random environments"""
+    print(f"Testing agent on {TEST_CONFIG['num_episodes']} episodes")
+    print(f"Using device: {device}")
+    
+    # Set random seeds for reproducibility
+    np.random.seed(42)
+    torch.manual_seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(42)
+    
+    # Load agent
+    agent = load_model(TEST_CONFIG['model_path'])
+    if agent is None:
+        print("Failed to load agent. Exiting.")
+        return
+    
+    # Testing statistics
+    success_count = 0
+    steps_list = []
+    rewards_list = []
+    
+    # Run test episodes
+    for episode in range(TEST_CONFIG['num_episodes']):
+        # Create environment
+        env = GridWorldEnv(
+            grid_dimensions=TEST_CONFIG['grid_size'],
+            num_obstacles=TEST_CONFIG['num_obstacles'],
+            max_steps=TEST_CONFIG['max_steps'],
+            use_coppeliasim=TEST_CONFIG['use_coppeliasim']
+        )
+        
+        state = env.reset()
+        done = False
+        episode_reward = 0
+        steps = 0
+        
+        print(f"\nEpisode {episode+1}:")
+        print(f"  Agent starting at ({env.x}, {env.y})")
+        print(f"  Goal at {env.goal}")
+        print(f"  {len(env.redspots)} obstacles")
+        
+        # Run episode
+        while not done and steps < TEST_CONFIG['max_steps']:
+            # Get action from agent
+            action = agent.select_action(state, testing=True)
+            
+            # Take step in environment
+            next_state, reward, done, info = env.step(action)
+            
+            # Update state and tracking variables
+            state = next_state
+            episode_reward += reward
+            steps += 1
+            
+            # Log step
+            action_names = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'STAY']
+            print(f"  Step {steps}: Action={action_names[action]}, "
+                  f"Position=({env.x}, {env.y}), "
+                  f"Distance={info['manhattan_distance']}, "
+                  f"Reward={reward:.2f}")
+            
+            # Check if goal reached
+            if info['manhattan_distance'] == 0:
+                print("  Goal reached! 🎉")
+                success_count += 1
+                break
+        
+        if info['manhattan_distance'] > 0:
+            print("  Failed to reach goal.")
+        
+        # Record episode statistics
+        steps_list.append(steps)
+        rewards_list.append(episode_reward)
+        
+        print(f"  Episode summary - Steps: {steps}, Reward: {episode_reward:.2f}")
+        
+        # Close environment
+        env.close()
+    
+    # Print overall performance
+    print("\n===== Test Results =====")
+    print(f"Success rate: {success_count/TEST_CONFIG['num_episodes']:.2f} ({success_count}/{TEST_CONFIG['num_episodes']})")
+    print(f"Average steps: {np.mean(steps_list):.2f}")
+    print(f"Average reward: {np.mean(rewards_list):.2f}")
+    
+    return success_count/TEST_CONFIG['num_episodes']
+
+if __name__ == "__main__":
+    test_agent()

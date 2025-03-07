@@ -5,6 +5,9 @@ import numpy as np
 import random
 from collections import deque
 
+# Check if GPU is available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 class QNetwork(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(QNetwork, self).__init__()
@@ -30,7 +33,10 @@ class QNetwork(nn.Module):
         
         # Add dropout for regularization
         self.dropout = nn.Dropout(0.1)
-
+        
+        # Move model to available device (GPU or CPU)
+        self.to(device)
+        
     def forward(self, x):
         # Handle single sample input during inference
         if len(x.shape) == 1:
@@ -59,7 +65,7 @@ class PrioritizedReplayBuffer:
         self.buffer = []
         self.position = 0
         self.eps = 1e-5  # Small constant to prevent zero priority
-
+        
     def add(self, state, action, reward, next_state, done):
         max_priority = self.priorities.max() if self.buffer else 1.0
         
@@ -70,7 +76,7 @@ class PrioritizedReplayBuffer:
         
         self.priorities[self.position] = max_priority
         self.position = (self.position + 1) % self.capacity
-
+        
     def sample(self, batch_size):
         if len(self.buffer) == 0:
             return None
@@ -95,15 +101,15 @@ class PrioritizedReplayBuffer:
         batch = list(zip(*samples))
         
         return (
-            torch.FloatTensor(np.array(batch[0])),  # states
-            torch.LongTensor(batch[1]),             # actions
-            torch.FloatTensor(batch[2]),            # rewards
-            torch.FloatTensor(np.array(batch[3])),  # next_states
-            torch.FloatTensor(batch[4]),            # dones
-            torch.FloatTensor(weights),             # importance sampling weights
+            torch.FloatTensor(np.array(batch[0])).to(device),  # states
+            torch.LongTensor(batch[1]).to(device),             # actions
+            torch.FloatTensor(batch[2]).to(device),            # rewards
+            torch.FloatTensor(np.array(batch[3])).to(device),  # next_states
+            torch.FloatTensor(batch[4]).to(device),            # dones
+            torch.FloatTensor(weights).to(device),             # importance sampling weights
             indices
         )
-
+        
     def update_priorities(self, indices, priorities):
         priorities = priorities.detach().cpu().numpy()
         for idx, priority in zip(indices, priorities):
@@ -116,6 +122,7 @@ class ImprovedDQNAgent:
         self.gamma = gamma
         self.epsilon = initial_epsilon
         self.tau = 0.005  # Soft update parameter
+        self.device = device  # Use the global device variable
         
         # Initialize networks
         self.q_network = QNetwork(state_dim, action_dim)
@@ -146,21 +153,24 @@ class ImprovedDQNAgent:
         self.reward_history = deque(maxlen=10000)
         self.reward_mean = 0
         self.reward_std = 1
-
+        
+        # Print which device is being used
+        print(f"Using device: {self.device}")
+        
     def update_reward_stats(self, reward):
         """Update running statistics for reward normalization"""
         self.reward_history.append(reward)
         if len(self.reward_history) > 1:
             self.reward_mean = np.mean(self.reward_history)
             self.reward_std = np.std(self.reward_history) + 1e-5
-
+            
     def normalize_reward(self, reward):
         """Normalize reward using running statistics"""
         return (reward - self.reward_mean) / self.reward_std
-
+        
     def select_action(self, state, testing=False):
-        # Convert state to tensor
-        state = torch.FloatTensor(state)
+        # Convert state to tensor and move to device
+        state = torch.FloatTensor(state).to(self.device)
         
         # Use lower epsilon during testing
         if testing:
@@ -173,7 +183,7 @@ class ImprovedDQNAgent:
                 return self.q_network(state).argmax().item()
         else:
             return random.randrange(self.action_dim)
-
+            
     def update(self, buffer, batch_size):
         # Sample from replay buffer
         batch = buffer.sample(batch_size)
@@ -185,7 +195,7 @@ class ImprovedDQNAgent:
         # Normalize rewards
         for reward in rewards:
             self.update_reward_stats(reward.item())
-        normalized_rewards = torch.tensor([self.normalize_reward(r.item()) for r in rewards])
+        normalized_rewards = torch.tensor([self.normalize_reward(r.item()) for r in rewards], device=self.device)
         
         # Calculate current Q values
         current_q_values = self.q_network(states).gather(1, actions.unsqueeze(1))
@@ -228,3 +238,10 @@ class ImprovedDQNAgent:
             target_param.data.copy_(
                 self.tau * policy_param.data + (1.0 - self.tau) * target_param.data
             )
+            
+    def load_model(self, model_path):
+        """Load a pre-trained model"""
+        checkpoint = torch.load(model_path, map_location=self.device)
+        self.q_network.load_state_dict(checkpoint['q_network_state'])
+        self.target_network.load_state_dict(checkpoint['target_network_state'])
+        print(f"Model loaded from {model_path}")

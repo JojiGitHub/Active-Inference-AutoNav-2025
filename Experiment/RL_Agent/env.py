@@ -351,12 +351,9 @@ class GridWorldEnv:
         max_time = 3.0  # seconds (increased from the default 2.0)
         start_time = time.time()
         
-        print(f"Following path... (delay={self.path_follow_delay}s)")
-        
         while self.posAlongPath < total_length:
             # Check if we've exceeded the time limit
             if time.time() - start_time > max_time:
-                print("Stopping path follow due to time limit")
                 break
                 
             t = sim.getSimulationTime()
@@ -372,7 +369,6 @@ class GridWorldEnv:
             
             if self.posAlongPath >= total_length - 0.001:
                 self.posAlongPath = total_length
-                print("Reached the end of the path!")
                 break
             
             # Calculate normalized parameter
@@ -484,10 +480,6 @@ class GridWorldEnv:
             old_position = self.current_location
             old_manhattan = abs(old_position[0] - self.goal[0]) + abs(old_position[1] - self.goal[1])
             
-            # Get action name for logging
-            action_name = ACTION_NAMES.get(action, "STAY")
-            print(f"Taking action: {action_name}")
-            
             # Store previous position before movement
             prev_x, prev_y = self.x, self.y
             offset_x = 0
@@ -513,8 +505,6 @@ class GridWorldEnv:
             new_position = self.current_location
             new_manhattan = abs(new_position[0] - self.goal[0]) + abs(new_position[1] - self.goal[1])
             
-            print(f"New position: {self.current_location}, Manhattan distance: {new_manhattan}")
-            
             # Update CoppeliaSim if enabled and not in simulation mode
             if self.use_coppeliasim and not self.simulation_mode:
                 try:
@@ -522,7 +512,6 @@ class GridWorldEnv:
                     sim_state = sim.getSimulationState()
                     if sim_state == sim.simulation_stopped:
                         sim.startSimulation()
-                        print("Starting simulation")
                         time.sleep(0.2)  # Give it time to start properly
                     
                     # Add new control point with offset for curved path
@@ -553,7 +542,6 @@ class GridWorldEnv:
                             )
                             
                             # Follow the path
-                            print("Following path...")
                             self.follow_path()
                             
                             # Remove the path object
@@ -585,13 +573,11 @@ class GridWorldEnv:
             if new_position == self.goal:
                 reward = 1.0  # Binary reward
                 done = True
-                print("Goal reached!")
             
             # Obstacle hit - episode ends with highly negative reward
             elif new_position in self.redspots:
                 reward = -20.0  # Significantly increased negative reward from -10.0 to -20.0
                 done = True
-                print("Hit obstacle!")
             
             # Enhanced reward system with obstacle avoidance
             else:
@@ -614,11 +600,9 @@ class GridWorldEnv:
                     (action == LEFT and self.x == 0) or
                     (action == RIGHT and self.x == self.grid_dimensions[0] - 1)):
                     reward -= 0.2
-                    print("Hit wall!")
             
             # Time limit reached
             if self.total_steps >= self.max_steps:
-                print("Max steps reached")
                 done = True
             
             # Get observation
@@ -653,7 +637,6 @@ class GridWorldEnv:
             self.x, self.y = self.init_loc
             self.current_location = (self.x, self.y)
             self.total_steps = 0
-            print(f"Resetting agent to position {self.current_location}")
             
             # Reset CoppeliaSim position if enabled
             if self.use_coppeliasim and not self.simulation_mode:
@@ -676,7 +659,6 @@ class GridWorldEnv:
                         restart_needed = True
                     
                     if restart_needed:
-                        print("Restarting simulation...")
                         try:
                             # Stop the simulation if it's running
                             sim_state = sim.getSimulationState()
