@@ -12,7 +12,6 @@ UP = 0
 DOWN = 1
 LEFT = 2
 RIGHT = 3
-STAY = 4
 
 # Action name mapping for consistent interface
 ACTION_NAMES = {
@@ -20,27 +19,33 @@ ACTION_NAMES = {
     DOWN: "DOWN",
     LEFT: "LEFT", 
     RIGHT: "RIGHT",
-    STAY: "STAY"
 }
 
 class Gridworld:
 
-    def __init__(self, size=40, mode='random', num_obstacles=20, random_seed=42, max_steps=100, use_coppeliasim=False):
+    def __init__(self, size=40, mode='random', num_obstacles=None, random_seed=42, max_steps=100, use_coppeliasim=False):
         # Validate input parameters
         if size < 5:  # Minimum size requirement
             print(f"Warning: Grid size {size} is too small. Setting to minimum size of 5")
             size = 5
             
-        # Adjust num_obstacles based on grid size to prevent overcrowding
-        max_possible_obstacles = (size - 2) * (size - 2) // 4  # Leave room for movement
-        if num_obstacles > max_possible_obstacles:
-            print(f"Warning: Too many obstacles ({num_obstacles}) for grid size {size}. Reducing to {max_possible_obstacles}")
-            num_obstacles = max_possible_obstacles
-
         # Set random seed for reproducibility
         random.seed(random_seed)
         np.random.seed(random_seed)
         
+        # If num_obstacles is not specified, randomly set it between 20 and 50 based on grid size
+        if num_obstacles is None:
+            max_possible_obstacles = (size - 2) * (size - 2) // 4  # Theoretical maximum obstacles
+            min_obstacles = min(20, max_possible_obstacles)
+            max_obstacles = min(50, max_possible_obstacles)
+            num_obstacles = random.randint(min_obstacles, max_obstacles)
+        else:
+            # Adjust num_obstacles based on grid size to prevent overcrowding
+            max_possible_obstacles = (size - 2) * (size - 2) // 4  # Leave room for movement
+            if num_obstacles > max_possible_obstacles:
+                print(f"Warning: Too many obstacles ({num_obstacles}) for grid size {size}. Reducing to {max_possible_obstacles}")
+                num_obstacles = max_possible_obstacles
+
         # Store configuration
         self.size = size
         self.mode = mode
@@ -62,7 +67,7 @@ class Gridworld:
         self.y = 0
         
         # Setup observation and action spaces for compatibility with Gym interface
-        self.action_space = spaces.Discrete(5)  # 5 actions: UP, DOWN, LEFT, RIGHT, STAY
+        self.action_space = spaces.Discrete(4)  # 5 actions: UP, DOWN, LEFT, RIGHT
         
         # Observation: 25 vision cells + agent x,y + goal x,y (29 total values)
         self.observation_space = spaces.Box(
@@ -364,8 +369,6 @@ class Gridworld:
             new_pos = (max(0, x-1), y)
         elif direction == RIGHT:  # RIGHT
             new_pos = (min(self.size-1, x+1), y)
-        else:  # STAY
-            new_pos = pos
             
         # Check if new position is on an obstacle
         if new_pos in self.board.obstacle_positions:
@@ -393,7 +396,7 @@ class Gridworld:
         old_manhattan = abs(old_position[0] - self.goal_position[0]) + abs(old_position[1] - self.goal_position[1])
         
         # Get action name for easier processing
-        action_name = ACTION_NAMES.get(action, "STAY")
+        action_name = ACTION_NAMES.get(action)
         
         # Execute the action
         self.makeMove(action_name)
