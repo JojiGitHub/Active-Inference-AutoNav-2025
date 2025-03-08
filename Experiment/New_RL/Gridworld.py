@@ -213,25 +213,65 @@ class Gridworld:
         if max_grid_x <= min_grid_x or max_grid_y <= min_grid_y:
             print(f"Warning: Grid size {self.size} is too small for additional obstacles")
             return
-            
-        # Calculate available positions
-        valid_positions = []
-        for x in range(min_grid_x, max_grid_x + 1):
-            for y in range(min_grid_y, max_grid_y + 1):
-                valid_positions.append((x, y))
-                
-        # Shuffle positions and select obstacles
-        random.shuffle(valid_positions)
-        num_obstacles_to_place = min(self.num_obstacles, len(valid_positions))
         
-        # Place obstacles
-        for i in range(num_obstacles_to_place):
-            pos = valid_positions[i]
-            if (pos not in self.board.obstacle_positions and 
-                ('Player' not in self.board.components or pos != self.board.components['Player'].pos) and
-                ('Goal' not in self.board.components or pos != self.board.components['Goal'].pos)):
-                self.board.obstacle_positions.append(pos)
-                self.board.redspots.append(pos)
+        # Set number of obstacles if not already set
+        if self.num_obstacles is None:
+            self.num_obstacles = random.randint(20, 50)
+        
+        # Generate obstacle positions
+        obstacle_positions = []
+        obstacle_attempts = 0
+        
+        while len(obstacle_positions) < self.num_obstacles and obstacle_attempts < 100:
+            obstacle_attempts += 1
+            
+            # Generate a random position that is not too close to the borders
+            center_x = random.randint(min_grid_x, max_grid_x)
+            center_y = random.randint(min_grid_y, max_grid_y)
+            
+            # Each obstacle will be 2x2 with the center at (center_x, center_y)
+            obstacle_size = 2
+            obstacle_valid = True
+            
+            # Check if this position and its 2x2 area overlaps with existing obstacles
+            for existing_pos in obstacle_positions:
+                ex_x, ex_y = existing_pos
+                
+                # Check if the existing obstacle 2x2 area overlaps with the new one
+                if (abs(center_x - ex_x) < obstacle_size and 
+                    abs(center_y - ex_y) < obstacle_size):
+                    obstacle_valid = False
+                    break
+            
+            # Check if the position is valid (not on player or goal)
+            if ('Player' in self.board.components and 
+                abs(center_x - self.board.components['Player'].pos[0]) < obstacle_size and
+                abs(center_y - self.board.components['Player'].pos[1]) < obstacle_size):
+                obstacle_valid = False
+            
+            if ('Goal' in self.board.components and 
+                abs(center_x - self.board.components['Goal'].pos[0]) < obstacle_size and
+                abs(center_y - self.board.components['Goal'].pos[1]) < obstacle_size):
+                obstacle_valid = False
+                
+            # If valid position, add the obstacle
+            if obstacle_valid:
+                obstacle_positions.append((center_x, center_y))
+        
+        # Create 2x2 obstacles for each position
+        for center_x, center_y in obstacle_positions:
+            # Add the 2x2 grid to redspots and obstacle_positions
+            # This creates a 2x2 obstacle centered at (center_x, center_y)
+            for dx in range(-1, 1):
+                for dy in range(-1, 1):
+                    x = center_x + dx
+                    y = center_y + dy
+                    
+                    # Ensure position is within bounds
+                    if 0 < x < self.size-1 and 0 < y < self.size-1:
+                        if (x, y) not in self.board.obstacle_positions:
+                            self.board.obstacle_positions.append((x, y))
+                            self.board.redspots.append((x, y))
         
         # Update the obstacle mask
         self.update_obstacle_mask()
@@ -241,37 +281,79 @@ class Gridworld:
         return self.board.get_observation()
 
     def generate_clustered_obstacles(self):
-        """Generate clustered obstacle patterns"""
+        """Generate clustered obstacle patterns with 2x2 sized obstacles"""
+        # Clear existing obstacles (except borders)
+        self.board.obstacle_positions = []
+        self.board.redspots = []
+        
+        # Add border walls first
+        self.add_border_walls()
+        
         # Number of clusters (ensure at least 1 cluster)
         num_clusters = max(1, min(4, self.num_obstacles // 5))
         obstacles_per_cluster = self.num_obstacles // num_clusters
         
+        # Track obstacle centers
+        obstacle_centers = []
+        
         # Generate clusters
         for _ in range(num_clusters):
             # Pick a random center that's not on the border
-            center_x = random.randint(2, self.size - 3)
-            center_y = random.randint(2, self.size - 3)
+            cluster_center_x = random.randint(4, self.size - 5)
+            cluster_center_y = random.randint(4, self.size - 5)
             
             # Add obstacles around the center
-            for _ in range(obstacles_per_cluster):
+            cluster_obstacles = 0
+            attempts = 0
+            
+            while cluster_obstacles < obstacles_per_cluster and attempts < 100:
+                attempts += 1
+                
                 # Get random offset from center (closer to center is more likely)
                 dx = int(random.gauss(0, 1.5))
                 dy = int(random.gauss(0, 1.5))
                 
-                x = max(1, min(self.size - 2, center_x + dx))
-                y = max(1, min(self.size - 2, center_y + dy))
+                # Calculate obstacle center position
+                center_x = max(2, min(self.size - 3, cluster_center_x + dx))
+                center_y = max(2, min(self.size - 3, cluster_center_y + dy))
                 
-                # Add the obstacle if not already present
-                pos = (x, y)
-                if pos not in self.board.obstacle_positions:
-                    self.board.redspots.append(pos)
-                    self.board.obstacle_positions.append(pos)
+                # Check if this center position overlaps with existing obstacle centers
+                overlap = False
+                for ex_x, ex_y in obstacle_centers:
+                    if abs(center_x - ex_x) < 2 and abs(center_y - ex_y) < 2:
+                        overlap = True
+                        break
+                
+                if not overlap:
+                    # Add this obstacle center
+                    obstacle_centers.append((center_x, center_y))
+                    cluster_obstacles += 1
+                    
+                    # Create a 2x2 obstacle at this center
+                    for ox in range(-1, 1):
+                        for oy in range(-1, 1):
+                            x = center_x + ox
+                            y = center_y + oy
+                            
+                            # Ensure position is within bounds
+                            if 0 < x < self.size-1 and 0 < y < self.size-1:
+                                pos = (x, y)
+                                if pos not in self.board.obstacle_positions:
+                                    self.board.redspots.append(pos)
+                                    self.board.obstacle_positions.append(pos)
         
         # Update the obstacle mask
         self.update_obstacle_mask()
 
     def generate_maze_walls(self):
-        """Generate maze-like walls in the environment"""
+        """Generate maze-like walls in the environment with 2x2 obstacle style"""
+        # Clear existing obstacles (except borders)
+        self.board.obstacle_positions = []
+        self.board.redspots = []
+        
+        # Add border walls first
+        self.add_border_walls()
+        
         # Number of wall segments
         num_walls = min(8, self.num_obstacles // 4)
         
@@ -280,31 +362,49 @@ class Gridworld:
             is_horizontal = random.choice([True, False])
             
             # Wall start position (avoid edges)
-            start_x = random.randint(2, self.size - 3)
-            start_y = random.randint(2, self.size - 3)
+            start_x = random.randint(3, self.size - 4)
+            start_y = random.randint(3, self.size - 4)
             
             # Wall length
-            length = random.randint(3, self.size // 4)
+            length = random.randint(3, self.size // 5)
             
-            # Create wall
+            # Create wall with 2x2 obstacle blocks
             if is_horizontal:
                 # Horizontal wall
-                for dx in range(length):
-                    x = min(self.size - 2, start_x + dx)
-                    y = start_y
-                    pos = (x, y)
-                    if pos not in self.board.obstacle_positions:
-                        self.board.redspots.append(pos)
-                        self.board.obstacle_positions.append(pos)
+                for block in range(0, length, 2):  # Step by 2 to create non-overlapping 2x2 blocks
+                    center_x = min(self.size - 3, start_x + block)
+                    center_y = start_y
+                    
+                    # Create a 2x2 obstacle at this center
+                    for dx in range(-1, 1):
+                        for dy in range(-1, 1):
+                            x = center_x + dx
+                            y = center_y + dy
+                            
+                            # Ensure position is within bounds
+                            if 0 < x < self.size-1 and 0 < y < self.size-1:
+                                pos = (x, y)
+                                if pos not in self.board.obstacle_positions:
+                                    self.board.redspots.append(pos)
+                                    self.board.obstacle_positions.append(pos)
             else:
                 # Vertical wall
-                for dy in range(length):
-                    x = start_x
-                    y = min(self.size - 2, start_y + dy)
-                    pos = (x, y)
-                    if pos not in self.board.obstacle_positions:
-                        self.board.redspots.append(pos)
-                        self.board.obstacle_positions.append(pos)
+                for block in range(0, length, 2):  # Step by 2 to create non-overlapping 2x2 blocks
+                    center_x = start_x
+                    center_y = min(self.size - 3, start_y + block)
+                    
+                    # Create a 2x2 obstacle at this center
+                    for dx in range(-1, 1):
+                        for dy in range(-1, 1):
+                            x = center_x + dx
+                            y = center_y + dy
+                            
+                            # Ensure position is within bounds
+                            if 0 < x < self.size-1 and 0 < y < self.size-1:
+                                pos = (x, y)
+                                if pos not in self.board.obstacle_positions:
+                                    self.board.redspots.append(pos)
+                                    self.board.obstacle_positions.append(pos)
         
         # Update the obstacle mask
         self.update_obstacle_mask()
