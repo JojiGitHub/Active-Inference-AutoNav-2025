@@ -1,1 +1,2 @@
 agent_type,random_seed,total_timesteps,total_distance,goal_reached,unique_locations,revisited_locations,shannon_entropy,grid_dims
+ActiveInference,1,17,17,1,18,0,4.169925001442312,40x40
