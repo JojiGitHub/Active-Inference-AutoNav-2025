@@ -104,6 +104,7 @@ The repository is organized as follows:
 3. **Scalability:** Test and adapt the agents for more complex, higher-dimensional environments.
 4. **Integration:** Streamline the workflow between the Python code and CoppeliaSim.
 5. **Generalization:** Evaluate performance across a wider variety of tasks and environmental conditions.
+6. **Hybrid Model Implementation:** Use active inference to fine-tune the results of an RL model.
 
 ## 👥 Authors
 
